@@ -41,8 +41,21 @@ Return ONLY a JSON object with EXACTLY these keys:
   "build_playbook": [{"step": "short title", "detail": "what to do and why", "stack": ["tools"]}],
   "improvements": [{"title": "", "rationale": "", "impact": "high|medium|low", "effort": "high|medium|low"}],
   "mvp_clone_spec": {"pitch": "", "core_features": [""], "recommended_stack": [""], "build_difficulty": 5, "market_potential": "$$", "milestones": [{"name": "", "outcome": ""}]},
+  "comparables": [{"name": "", "what": "one line on what they are", "note": "positioning/traction if you know it"}],
+  "clone_studio": {
+    "stack": ["the concrete stack a builder should use to clone this"],
+    "file_tree": "a realistic starter project tree as a plain-text block (dirs + key files)",
+    "key_files": [{"path": "path/to/file", "purpose": "what it does"}],
+    "setup": ["ordered shell commands to scaffold and run it"],
+    "env": ["ENV_VARS the clone would need"],
+    "first_feature": "the single first feature to build end-to-end to prove the clone"
+  },
   "caveats": ["what you could NOT determine and why"]
 }
+
+More guidance:
+- comparables: 2-3 real competing/alternative products (name them), so the builder sees the landscape. If unsure of traction, say so in note.
+- clone_studio: make it genuinely buildable — a real file tree, real setup commands (npm/pip/etc.), real env vars. This is a from-scratch clone brief, NOT the target's private code.
 
 Scoring guidance:
 - composite_score (0-100): your overall read = how well-understood the build is AND how clonable it looks. High only when the stack is clear and the app is realistically rebuildable.
@@ -51,6 +64,31 @@ Scoring guidance:
 - build_difficulty (integer 1-10): 1 = a weekend clone, 10 = deep technical/infra/data moat.
 - market_potential: "$" niche, "$$" solid demand, "$$$" large or clearly proven market.
 Output valid JSON only, no prose outside the object."""
+
+
+CHAT_SYSTEM = """You are BLUEPRINT's analyst. Answer the user's question about THIS specific product
+teardown, grounded strictly in the provided evidence and report. Be concrete and technical. If something
+was not observed in the signals, say it's inferred or unknown — never fabricate private internals. Keep
+answers tight (2-6 sentences or a short list). You may explain how to build or improve the relevant part."""
+
+
+async def ask(question: str, report: dict, evidence: dict) -> str:
+    """Grounded Q&A over a completed teardown (powers 'Ask BLUEPRINT')."""
+    context = {
+        "target": evidence.get("target"),
+        "summary": report.get("summary"),
+        "inferred_stack": report.get("inferred_stack"),
+        "architecture": report.get("architecture"),
+        "business_model": report.get("business_model"),
+        "detections": [d.get("name") for d in (evidence.get("detections") or [])][:40],
+        "endpoints": (evidence.get("endpoints") or [])[:20],
+        "improvements": report.get("improvements"),
+        "clone_studio": report.get("clone_studio"),
+    }
+    user = (f"TEARDOWN CONTEXT:\n{json.dumps(context, ensure_ascii=False)[:7000]}\n\n"
+            f"QUESTION: {question.strip()}")
+    return await llm.chat([{"role": "system", "content": CHAT_SYSTEM}, {"role": "user", "content": user}],
+                          temperature=0.3, max_tokens=800)
 
 
 def evidence_score(ev: dict) -> dict:
@@ -101,7 +139,7 @@ async def synthesize(evidence: dict) -> dict:
             + json.dumps(_trim(evidence), ensure_ascii=False, indent=2))
     reply = await llm.chat(
         [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
-        temperature=0.25, max_tokens=5000, json_mode=True,
+        temperature=0.25, max_tokens=6500, json_mode=True,
     )
     try:
         report = llm.extract_json(reply)

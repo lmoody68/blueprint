@@ -11,6 +11,7 @@ import re
 import ssl
 import socket
 import asyncio
+import ipaddress
 import urllib.parse
 import urllib.robotparser
 import httpx
@@ -34,6 +35,30 @@ def normalize_url(target: str) -> str:
 
 def host_of(url: str) -> str:
     return urllib.parse.urlparse(url).hostname or ""
+
+
+def public_host_ok(host: str) -> tuple[bool, str]:
+    """SSRF GUARD — resolve the target and refuse anything that isn't a public IP.
+    BLUEPRINT fetches user-supplied URLs server-side, so without this a caller could aim it at cloud
+    metadata (169.254.169.254), localhost, or the internal LAN (192.168/10/172.16) to probe or exfiltrate.
+    We block loopback, private, link-local, reserved, multicast, and unspecified addresses (v4 and v6)."""
+    if not host:
+        return False, "no host in target"
+    if host.lower() in ("localhost", "ip6-localhost", "metadata", "metadata.google.internal"):
+        return False, f"blocked host '{host}' (SSRF guard)"
+    try:
+        ips = {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except Exception as e:
+        return False, f"could not resolve host ({type(e).__name__})"
+    for ip in ips:
+        try:
+            addr = ipaddress.ip_address(ip.split("%")[0])
+        except ValueError:
+            continue
+        if (addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
+                or addr.is_multicast or addr.is_unspecified):
+            return False, f"target resolves to a non-public address ({ip}) — blocked (SSRF guard)"
+    return True, "public"
 
 
 async def _robots_ok(client: httpx.AsyncClient, base: str, path: str = "/") -> tuple[bool, str]:
@@ -151,11 +176,40 @@ async def _graphql_introspection(client: httpx.AsyncClient, endpoints: list[str]
     return None
 
 
+async def _crawl_bundles(client: httpx.AsyncClient, assets: list[str], base: str, limit: int = 4) -> dict:
+    """ACTIVE, opt-in: fetch a few of the app's own JS bundles and mine API paths the markup didn't show.
+    These bundles are already public (the browser downloads them) — this is deeper endpoint discovery, not
+    decompilation. Same-origin bundles first."""
+    host = host_of(base)
+    js = [a for a in assets if a.lower().split("?")[0].endswith(".js")]
+    js.sort(key=lambda a: 0 if host_of(a) == host else 1)
+    found: set[str] = set()
+    crawled: list[str] = []
+    for u in js[:limit]:
+        try:
+            r = await client.get(u, timeout=12)
+            if r.status_code != 200:
+                continue
+            crawled.append(u.split("/")[-1][:44])
+            for m in re.findall(r'["\'`](/(?:api|v1|v2|graphql|rest|rpc)[/\w.\-]*)', r.text):
+                found.add(m)
+            for m in re.findall(r'https?://[\w.\-]*api[\w.\-]*\.\w+[/\w.\-]*', r.text):
+                found.add(m)
+        except Exception:
+            continue
+    return {"bundles_crawled": crawled, "endpoints": sorted(found)[:40]}
+
+
 async def analyze_web(target: str, active: bool = False) -> dict:
     from bs4 import BeautifulSoup
     url = normalize_url(target)
     host = host_of(url)
     result: dict = {"target": url, "host": host, "kind": "web", "notes": [], "phase2_pending": []}
+
+    ok_pub, why = public_host_ok(host)
+    if not ok_pub:
+        result["error"] = why
+        return result
 
     limits = httpx.Limits(max_connections=6)
     async with httpx.AsyncClient(headers={"User-Agent": BROWSER_UA}, follow_redirects=True,
@@ -196,8 +250,11 @@ async def analyze_web(target: str, active: bool = False) -> dict:
         if active:
             gql = await _graphql_introspection(client, result["endpoints"], url)
             result["active_graphql"] = gql or {"introspection": "closed/none-found"}
+            bundles = await _crawl_bundles(client, assets, url)
+            result["active_bundles"] = bundles
+            result["endpoints"] = sorted(set(result["endpoints"]) | set(bundles["endpoints"]))[:60]
         else:
-            result["phase2_pending"].append("active endpoint & GraphQL probing (enable 'deep' mode)")
+            result["phase2_pending"].append("deep-active endpoint/GraphQL/bundle probing (enable 'Deep recon')")
 
     result["phase2_pending"].append("job-listing stack mining (needs a search source)")
     return result
@@ -211,10 +268,50 @@ def looks_mobile(target: str) -> bool:
 
 
 async def analyze_mobile(target: str) -> dict:
-    result = {"target": target, "kind": "mobile", "notes": [
-        "Mobile teardown is Phase 2: public store metadata, declared permissions, SDK/tracker "
-        "fingerprinting (e.g. Exodus-style), and review-mining for pain points."],
-        "phase2_pending": ["store metadata fetch", "permission & tracker analysis", "review pain-point mining"]}
+    """Public app-store listing teardown: metadata + framework/SDK hints from the store page.
+    (App internals live in the binary — out of scope by our red lines — so build details are INFERRED.)"""
+    from bs4 import BeautifulSoup
+    t = normalize_url(target)
+    store = ("Google Play" if "play.google.com" in t else
+             "App Store" if ("apps.apple.com" in t or "itunes.apple.com" in t) else "unknown")
+    result: dict = {"target": t, "host": host_of(t), "kind": "mobile", "store": store, "notes": [], "phase2_pending": []}
+    ok_pub, why = public_host_ok(host_of(t))
+    if not ok_pub:
+        result["error"] = why
+        return result
+    async with httpx.AsyncClient(headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=20.0) as client:
+        ok, robots_note = await _robots_ok(client, t)
+        result["robots"] = {"root_allowed": ok, "note": robots_note}
+        try:
+            r = await client.get(t)
+        except Exception as e:
+            result["error"] = f"fetch failed: {type(e).__name__}: {e}"
+            return result
+        html = r.text
+        soup = BeautifulSoup(html, "html.parser")
+
+        def meta(name=None, prop=None):
+            tag = soup.find("meta", attrs={"name": name}) if name else soup.find("meta", attrs={"property": prop})
+            return tag.get("content").strip() if tag and tag.get("content") else None
+
+        title = meta(prop="og:title") or (soup.title.string.strip() if soup.title and soup.title.string else None)
+        desc = meta(name="description") or meta(prop="og:description")
+        # framework / SDK hints occasionally leaked in the listing (App Store often names the seller/tech)
+        hints = []
+        for name, pat in (("React Native", r"react[- ]?native"), ("Flutter", r"flutter"),
+                          ("Unity", r"unity"), ("Firebase", r"firebase"), ("Ionic/Capacitor", r"ionic|capacitor")):
+            if re.search(pat, html, re.I):
+                hints.append(name)
+        result["fetched"] = {"final_url": str(r.url), "status": r.status_code, "title": title, "bytes": len(html)}
+        result["store_meta"] = {"title": title, "description": (desc or "")[:600],
+                                "genre": meta(prop="og:type"), "image": meta(prop="og:image")}
+        result["framework_hints"] = hints
+        result["detections"] = [{"name": h, "category": "mobile-framework", "confidence": "low",
+                                 "evidence": "mentioned in store listing"} for h in hints]
+        result["notes"].append("Mobile teardown = PUBLIC store-listing metadata + any framework hints on the page. "
+                               "The app binary is out of scope (no decompilation), so stack/architecture is INFERRED "
+                               "from the app category and public signals — treat confidence as low unless hints appear.")
+        result["phase2_pending"].append("APK/IPA-level SDK & permission analysis is intentionally NOT done (red line)")
     return result
 
 

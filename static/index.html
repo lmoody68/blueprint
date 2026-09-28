@@ -67,6 +67,24 @@
   .meter{height:7px;background:#060b18;border-radius:5px;overflow:hidden;margin-top:9px}
   .meter-fill{height:100%;border-radius:5px;transition:width .5s ease}
   .bizmodel .bm{font-size:22px;font-weight:800;margin-top:4px;color:var(--accent);text-transform:uppercase;letter-spacing:.02em}
+  .tabspace{flex:1 1 auto}
+  .xbtn{background:#0b1526;color:var(--accent);border:1px solid var(--line);border-radius:8px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;margin:2px 0 2px 6px}
+  .xbtn:hover{border-color:var(--accent)}
+  pre.tree{background:#060b18;border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;font-size:12px;color:#b9c6e0;line-height:1.5;white-space:pre}
+  .cmp{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:8px}
+  .cmpc{background:#0b1526;border:1px solid var(--line);border-radius:10px;padding:12px}
+  .chatlog{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto;margin-bottom:12px;padding:2px}
+  .msg{padding:10px 13px;border-radius:12px;font-size:13.5px;line-height:1.5;max-width:88%;white-space:pre-wrap;word-wrap:break-word}
+  .msg.you{align-self:flex-end;background:var(--accent);color:#04121f;font-weight:500;border-bottom-right-radius:4px}
+  .msg.bp{align-self:flex-start;background:#0b1526;border:1px solid var(--line);border-bottom-left-radius:4px}
+  .msg.err{color:var(--bad)}
+  .chatform{display:flex;gap:8px}
+  .chatform input{flex:1;min-width:0;background:#060b18;border:1px solid var(--line);color:var(--ink);padding:11px 13px;border-radius:10px;font-size:14px}
+  .chatform input:focus{outline:none;border-color:var(--accent)}
+  .chatform button{background:var(--accent);color:#04121f;border:0;padding:0 18px;border-radius:10px;font-weight:700;cursor:pointer}
+  .chatchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .qchip{cursor:pointer;background:#0b1526;border:1px dashed var(--line);color:var(--dim);font-family:inherit}
+  .qchip:hover{border-color:var(--accent);color:var(--accent)}
   .step{border-left:2px solid var(--accent);padding:2px 0 2px 14px;margin:0 0 16px}
   .step .t{font-weight:700;font-size:14.5px} .step .d{color:var(--dim);font-size:13.5px;margin-top:3px;line-height:1.55}
   .imp{background:#0b1526;border:1px solid var(--line);border-radius:10px;padding:13px;margin-bottom:10px}
@@ -141,8 +159,9 @@ function renderError(msg){
 }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
+let LAST=null;
 function render(data){
-  const ev = data.evidence||{}, rep = data.report;
+  const ev = data.evidence||{}, rep = data.report; LAST={ev,rep,data};
   const panes = [];
   panes.push(['Overview', overview(ev, rep, data)]);
   if(rep){
@@ -151,10 +170,13 @@ function render(data){
     panes.push(['Build Playbook', playbook(rep)]);
     panes.push(['Improvements', improvements(rep)]);
     panes.push(['MVP Clone', mvp(rep)]);
+    panes.push(['Clone Studio', cloneStudio(rep)]);
+    panes.push(['Ask BLUEPRINT', chatPane()]);
   }
   panes.push(['Evidence', evidence(ev)]);
 
-  $('#tabs').innerHTML = panes.map((p,i)=>`<button class="tab ${i===0?'active':''}" data-i="${i}">${p[0]}</button>`).join('');
+  const xbar = rep ? `<span class="tabspace"></span><button class="xbtn" onclick="exportMD()">⬇ MD</button><button class="xbtn" onclick="exportJSON()">⬇ JSON</button>` : '';
+  $('#tabs').innerHTML = panes.map((p,i)=>`<button class="tab ${i===0?'active':''}" data-i="${i}">${esc(p[0])}</button>`).join('') + xbar;
   $('#panes').innerHTML = panes.map((p,i)=>`<div class="pane ${i===0?'active':''}" data-i="${i}">${p[1]}</div>`).join('');
   $('#out').classList.add('on');
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
@@ -162,8 +184,69 @@ function render(data){
     document.querySelectorAll('.pane').forEach(x=>x.classList.remove('active'));
     t.classList.add('active'); document.querySelector('.pane[data-i="'+t.dataset.i+'"]').classList.add('active');
   });
+  const cf=document.getElementById('chatForm'); if(cf) cf.onsubmit=onChat;
   if(mermaidReady){ const el=document.querySelector('.mermaid'); if(el){ try{ mermaid.run({nodes:[el]}); }catch(e){ el.innerHTML='<span class="muted">diagram render failed</span>'; } } }
 }
+
+function cloneStudio(rep){
+  const c=rep.clone_studio||{}; let h='';
+  if(!Object.keys(c).length) return '<p class="muted">No build brief generated.</p>';
+  h+='<p class="muted" style="margin-bottom:12px">A from-scratch brief to build a comparable app — <b>not</b> the target\'s code.</p>';
+  if((c.stack||[]).length){ h+='<h3>Recommended stack</h3><div style="margin-bottom:12px">'+c.stack.map(s=>`<span class="chip">${esc(s)}</span>`).join('')+'</div>'; }
+  if(c.first_feature) h+=`<div class="imp" style="border-left:3px solid var(--accent)"><b>Build this first:</b> ${esc(c.first_feature)}</div>`;
+  if(c.file_tree) h+='<h3 style="margin-top:14px">Project scaffold</h3><pre class="tree">'+esc(c.file_tree)+'</pre>';
+  if((c.key_files||[]).length){ h+='<h3 style="margin-top:14px">Key files</h3><ul>'+c.key_files.map(f=>`<li><code>${esc(f.path)}</code> — ${esc(f.purpose)}</li>`).join('')+'</ul>'; }
+  if((c.setup||[]).length){ h+='<h3 style="margin-top:14px">Setup</h3><pre class="tree">'+c.setup.map(esc).join('\n')+'</pre>'; }
+  if((c.env||[]).length){ h+='<h3 style="margin-top:14px">Environment</h3><div>'+c.env.map(e=>`<span class="chip">${esc(e)}</span>`).join('')+'</div>'; }
+  h+='<div style="margin-top:16px"><button class="xbtn" onclick="downloadBrief()">⬇ Download build brief (.md)</button></div>';
+  return h;
+}
+function chatPane(){
+  const qs=['What would be hardest to clone?','How is their real-time layer likely built?','What is their biggest weakness?','Sketch a 2-week MVP plan.'];
+  return `<p class="muted" style="margin-bottom:10px">Ask anything about this teardown — answers are grounded in the evidence + report.</p>
+    <div id="chatLog" class="chatlog"></div>
+    <form id="chatForm" class="chatform" autocomplete="off">
+      <input id="chatQ" type="text" placeholder="e.g. How would I build their auth? What's the likely DB schema?" />
+      <button type="submit">Ask</button>
+    </form>
+    <div class="chatchips">${qs.map(q=>`<button class="chip qchip" onclick="askQuick(this)">${esc(q)}</button>`).join('')}</div>`;
+}
+function askQuick(btn){ const i=document.getElementById('chatQ'); if(i){ i.value=btn.textContent; document.getElementById('chatForm').requestSubmit(); } }
+async function onChat(e){
+  e.preventDefault();
+  const i=document.getElementById('chatQ'), log=document.getElementById('chatLog');
+  const q=i.value.trim(); if(!q||!LAST||!LAST.rep) return;
+  i.value=''; i.disabled=true;
+  log.insertAdjacentHTML('beforeend', `<div class="msg you">${esc(q)}</div><div class="msg bp" id="pending">…thinking…</div>`);
+  log.scrollTop=log.scrollHeight;
+  try{
+    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({question:q, report:LAST.rep, evidence:LAST.ev})});
+    const d=await r.json();
+    document.getElementById('pending').outerHTML=`<div class="msg bp">${esc(d.answer||d.error||'(no answer)')}</div>`;
+  }catch(err){ document.getElementById('pending').outerHTML=`<div class="msg bp err">${esc(err.message)}</div>`; }
+  i.disabled=false; i.focus(); log.scrollTop=log.scrollHeight;
+}
+function buildMarkdown(){
+  const ev=LAST.ev, r=LAST.rep||{}; const L=[];
+  L.push('# BLUEPRINT teardown — '+(ev.host||ev.target));
+  if(r.summary) L.push('\n'+r.summary);
+  L.push(`\n**Composite:** ${r.composite_score}/100 · **Evidence:** ${(r.evidence_score||{}).score}/100 · **Business model:** ${(r.business_model||{}).type||'?'}`);
+  const st=r.inferred_stack||{}; L.push('\n## Inferred stack');
+  ['frontend','backend','database','infra','third_party'].forEach(g=>{ const it=st[g]||[]; if(it.length) L.push(`- **${g}:** `+it.map(x=>`${x.tech} (${x.confidence})`).join(', ')); });
+  if((r.build_playbook||[]).length){ L.push('\n## Build playbook'); r.build_playbook.forEach((s,i)=>L.push(`${i+1}. **${s.step}** — ${s.detail}`)); }
+  if((r.improvements||[]).length){ L.push('\n## Improvements'); r.improvements.forEach(x=>L.push(`- **${x.title}** (impact ${x.impact}/effort ${x.effort}) — ${x.rationale}`)); }
+  const c=r.clone_studio||{}; if(c.file_tree){ L.push('\n## Clone Studio'); if((c.stack||[]).length)L.push('**Stack:** '+c.stack.join(', ')); L.push('```\n'+c.file_tree+'\n```'); if((c.setup||[]).length)L.push('**Setup:**\n```\n'+c.setup.join('\n')+'\n```'); }
+  if((r.comparables||[]).length){ L.push('\n## Comparables'); r.comparables.forEach(x=>L.push(`- **${x.name}** — ${x.what}`)); }
+  if((r.caveats||[]).length){ L.push('\n## Caveats'); r.caveats.forEach(x=>L.push('- '+x)); }
+  L.push('\n---\n*Generated by BLUEPRINT — inferred from public signals.*');
+  return L.join('\n');
+}
+function dl(name, text, mime){ const b=new Blob([text],{type:mime}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000); }
+function slug(){ return (LAST.ev.host||'teardown').replace(/[^a-z0-9.]/gi,'_'); }
+function exportMD(){ if(LAST&&LAST.rep) dl(slug()+'.blueprint.md', buildMarkdown(), 'text/markdown'); }
+function exportJSON(){ if(LAST) dl(slug()+'.blueprint.json', JSON.stringify({report:LAST.rep,evidence:LAST.ev},null,2), 'application/json'); }
+function downloadBrief(){ if(!LAST||!LAST.rep) return; const c=LAST.rep.clone_studio||{}; const md='# Build brief — clone of '+(LAST.ev.host||LAST.ev.target)+'\n\n**Stack:** '+(c.stack||[]).join(', ')+'\n\n**Build first:** '+(c.first_feature||'')+'\n\n## Scaffold\n```\n'+(c.file_tree||'')+'\n```\n\n## Setup\n```\n'+(c.setup||[]).join('\n')+'\n```\n\n## Env\n'+(c.env||[]).map(e=>'- '+e).join('\n')+'\n\n## Key files\n'+(c.key_files||[]).map(f=>'- `'+f.path+'` — '+f.purpose).join('\n'); dl(slug()+'.build-brief.md', md, 'text/markdown'); }
 
 function scoreCard(label,val,sub){
   const color = val>=70?'var(--good)':val>=40?'var(--warn)':'var(--bad)';
@@ -196,8 +279,10 @@ function overview(ev, rep, data){
   if(n.tls_issuer) h+=stat('TLS issuer', n.tls_issuer);
   if(ev.robots) h+=stat('robots.txt', ev.robots.note);
   h+='</div>';
+  if(ev.kind==='mobile' && ev.store_meta){ const m=ev.store_meta; h+=`<p class="muted" style="margin-top:12px">📱 ${esc(ev.store||'store')} listing${(ev.framework_hints||[]).length?' · hints: '+ev.framework_hints.map(esc).join(', '):''}${m.description?'<br>'+esc(m.description.slice(0,240)):''}</p>`; }
+  if(rep && (rep.comparables||[]).length){ h+='<h3 style="margin-top:16px">Comparable products</h3><div class="cmp">'+rep.comparables.map(c=>`<div class="cmpc"><b>${esc(c.name)}</b><div class="muted" style="font-size:12.5px;margin-top:3px;line-height:1.45">${esc(c.what)}${c.note?' · '+esc(c.note):''}</div></div>`).join('')+'</div>'; }
   if(data.note) h+=`<p class="muted" style="margin-top:12px">ℹ ${esc(data.note)}</p>`;
-  if((ev.phase2_pending||[]).length) h+=`<p class="muted" style="margin-top:10px">Deferred to later phases: ${ev.phase2_pending.map(esc).join(' · ')}</p>`;
+  if((ev.phase2_pending||[]).length) h+=`<p class="muted" style="margin-top:10px">Not attempted: ${ev.phase2_pending.map(esc).join(' · ')}</p>`;
   return h;
 }
 function stat(k,v){ return `<div class="stat"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`; }
