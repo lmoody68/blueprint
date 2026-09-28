@@ -42,7 +42,10 @@ That's it. Everything below explains what you're looking at.
 - **Evidence** — the receipts: every detected technology with the exact header/cookie/asset that proved it,
   endpoints found, public GitHub repos, pricing, and response headers.
 
-**Export anytime:** the **⬇ MD** and **⬇ JSON** buttons (top-right of the tabs) download the whole teardown.
+**Export anytime** (top-right of the tabs):
+- **📄 Report** — opens a clean, professional, print-styled report in a new tab, with **🖨 Print / Save as PDF**
+  and **⬇ Download HTML** buttons. This is the shareable deliverable — hand it to a client or save a PDF.
+- **⬇ MD** — the whole teardown as Markdown. **⬇ JSON** — the raw report + evidence data.
 
 ---
 
