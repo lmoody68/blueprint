@@ -112,8 +112,28 @@ Include at minimum: a README.md (with run steps), a manifest (package.json / req
 entry point, the first-feature implementation, and any config. Output valid JSON only."""
 
 
-async def generate_app(report: dict, evidence: dict) -> dict:
-    """AI-build: turn the teardown into a runnable starter project (files) — the 'Build it with AI' button."""
+GOAL_DIRECTIVES = {
+    "clone": "GOAL: Build a fresh, independent app inspired by the product's CORE — a new project, your own name.",
+    "improve": "GOAL: You are rebuilding THIS app FOR ITS OWNER (a friend/classmate asked for help). KEEP its name, "
+               "purpose and identity. IMPROVE it: apply the listed improvements, strengthen weak areas, add polish, "
+               "and modernize the implementation. It should feel like a better version of THEIR app, not a new one.",
+    "fix": "GOAL: You are fixing THIS app FOR ITS OWNER. KEEP its name, purpose and identity. Correct likely bugs, "
+           "handle errors and edge cases, and make it robust and reliably runnable — a solid, working version of their app.",
+    "redesign": "GOAL: You are redesigning THIS app FOR ITS OWNER. KEEP its name, purpose, features and identity, but "
+                "deliver a clean, modern, polished UI/UX overhaul with better layout, styling and usability.",
+}
+
+
+async def generate_app(report: dict, evidence: dict, keep_name: str | None = None, goal: str = "clone") -> dict:
+    """AI-build: turn the teardown into a runnable starter project (files) — the 'Build it with AI' button.
+
+    goal: clone | improve | fix | redesign. keep_name: the owner's existing app name to preserve (for rebuilding
+    an app a friend/classmate built, keeping their identity)."""
+    directive = GOAL_DIRECTIVES.get(goal, GOAL_DIRECTIVES["clone"])
+    if keep_name:
+        directive += (f'\nUSE THIS EXACT app/project name (the owner already uses it): "{keep_name}". '
+                      f'Keep their branding and identity — do NOT rename it.')
+    system = BUILD_SYSTEM + "\n\n" + directive
     ctx = {
         "target": evidence.get("target"),
         "summary": report.get("summary"),
@@ -125,7 +145,7 @@ async def generate_app(report: dict, evidence: dict) -> dict:
         "inferred_stack": report.get("inferred_stack"),
     }
     user = "PRODUCT TEARDOWN:\n" + json.dumps(ctx, ensure_ascii=False)[:8000]
-    reply = await llm.chat([{"role": "system", "content": BUILD_SYSTEM}, {"role": "user", "content": user}],
+    reply = await llm.chat([{"role": "system", "content": system}, {"role": "user", "content": user}],
                            temperature=0.3, max_tokens=8000, json_mode=True)
     try:
         proj = llm.extract_json(reply)
@@ -136,6 +156,9 @@ async def generate_app(report: dict, evidence: dict) -> dict:
     for f in files:
         f["content"] = str(f.get("content") or "")[:20000]
     proj["files"] = files
+    if keep_name:
+        proj["name"] = keep_name           # preserve the owner's name no matter what the model returned
+    proj["_goal"] = goal
     return proj
 
 

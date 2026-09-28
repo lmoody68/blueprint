@@ -88,6 +88,11 @@
   .bigbtn{background:linear-gradient(135deg,#38bdf8,#7c9cff);color:#04121f;border:0;padding:11px 18px;border-radius:10px;font-weight:800;font-size:14px;cursor:pointer}
   .bigbtn.sm{padding:7px 13px;font-size:12.5px}
   .bigbtn:hover{filter:brightness(1.08)}
+  .buildopts{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:16px}
+  .buildopts select,.buildopts input{background:#060b18;border:1px solid var(--line);color:var(--ink);padding:9px 11px;border-radius:9px;font-size:13px;font-family:inherit}
+  .buildopts input{flex:1;min-width:240px}
+  .buildopts select:focus,.buildopts input:focus{outline:none;border-color:var(--accent)}
+  .bopt{display:flex;gap:6px;align-items:center;color:var(--dim);font-size:12.5px}
   .buildout{margin-top:14px}
   .building{color:var(--accent);font-family:var(--mono);font-size:13px;padding:10px 0}
   .projbox{background:#0b1526;border:1px solid var(--line);border-radius:12px;padding:14px}
@@ -213,11 +218,20 @@ function cloneStudio(rep){
   if((c.key_files||[]).length){ h+='<h3 style="margin-top:14px">Key files</h3><ul>'+c.key_files.map(f=>`<li><code>${esc(f.path)}</code> — ${esc(f.purpose)}</li>`).join('')+'</ul>'; }
   if((c.setup||[]).length){ h+='<h3 style="margin-top:14px">Setup</h3><pre class="tree">'+c.setup.map(esc).join('\n')+'</pre>'; }
   if((c.env||[]).length){ h+='<h3 style="margin-top:14px">Environment</h3><div>'+c.env.map(e=>`<span class="chip">${esc(e)}</span>`).join('')+'</div>'; }
-  h+='<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+  h+='<div class="buildopts">'
+    +'<label class="bopt">Goal <select id="buildGoal">'
+      +'<option value="clone">Fresh clone (new app)</option>'
+      +'<option value="improve">Improve an existing app</option>'
+      +'<option value="fix">Fix bugs</option>'
+      +'<option value="redesign">Redesign the UI</option>'
+    +'</select></label>'
+    +'<input id="keepName" type="text" placeholder="Keep app name — rebuild it for a friend/classmate (blank = fresh clone)" />'
+  +'</div>';
+  h+='<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
     +'<button class="bigbtn" onclick="generateApp()">🚀 Build it with AI</button>'
     +'<button class="xbtn" onclick="downloadBrief()">⬇ Build brief (.md)</button>'
     +'<button class="xbtn" onclick="copyBuildPrompt()">🛠 Copy build prompt → Emergent / Lovable / Bolt</button></div>'
-    +'<p class="muted" style="font-size:11.5px;margin-top:6px">“Build it with AI” generates a real, runnable starter project (with your improvements) you can download as a .zip.</p>';
+    +'<p class="muted" style="font-size:11.5px;margin-top:6px">Generates a real, runnable starter project (.zip). Pick <b>Improve / Fix / Redesign</b> and enter a name to rebuild a friend’s app <b>keeping their name & identity</b>; leave the name blank for a fresh clone.</p>';
   h+='<div id="buildOut" class="buildout"></div>';
   return h;
 }
@@ -225,9 +239,12 @@ async function generateApp(){
   if(!LAST||!LAST.rep) return;
   const out=document.getElementById('buildOut');
   out.innerHTML='<div class="building"><span class="spin"></span> Building your app with AI… generating real, runnable code (~15-30s)</div>';
+  const goalEl=document.getElementById('buildGoal'), nameEl=document.getElementById('keepName');
+  const goal=goalEl?goalEl.value:'clone';
+  const keep_name=nameEl?nameEl.value.trim():'';
   try{
     const r=await fetch('/api/generate_app',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({report:LAST.rep, evidence:LAST.ev})});
+      body:JSON.stringify({report:LAST.rep, evidence:LAST.ev, goal, keep_name})});
     const p=await r.json();
     if(p.error){ out.innerHTML='<div class="err">⚠ '+esc(p.error)+'</div>'; return; }
     LAST.project=p; renderProject(p);

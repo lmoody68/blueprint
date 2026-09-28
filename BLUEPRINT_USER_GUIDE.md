@@ -40,6 +40,10 @@ That's it. Everything below explains what you're looking at.
     The generated project appears as an expandable file browser (click any file to read it), and
     **⬇ Download project (.zip)** saves the whole thing. Unzip it, follow the README's run steps, and it runs.
     This is the reverse-engineer → *rebuild* loop, fully automated — analysis straight to working code.
+    - **Helping a friend or classmate with an app they built?** Set the **Goal** dropdown to **Improve /
+      Fix bugs / Redesign UI** and type their app's name in the **"Keep app name"** box. BLUEPRINT then rebuilds
+      *their* app — **keeping its name and identity** — improved, fixed, or redesigned, so you can hand it back to
+      them. (Leave the name blank and pick **Fresh clone** to build a brand-new app instead.)
   - **🛠 Copy build prompt** — copies a ready-to-paste prompt for an external AI app builder (**Emergent,
     Lovable, Bolt, or Claude**) if you'd rather build it there.
   - **⬇ Download build brief (.md)** — save the written brief to build from by hand.

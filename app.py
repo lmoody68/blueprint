@@ -170,10 +170,14 @@ async def generate_app(req: Request):
     evidence = body.get("evidence") or {}
     if not report:
         return JSONResponse({"error": "Run a teardown first, then build."}, status_code=400)
+    keep_name = (body.get("keep_name") or "").strip()[:80] or None
+    goal = (body.get("goal") or "clone").strip().lower()
+    if goal not in ("clone", "improve", "fix", "redesign"):
+        goal = "clone"
     if not _global_ok():
         return JSONResponse({"error": "Daily cap reached — resets tomorrow."}, status_code=429)
     try:
-        return await synthesize.generate_app(report, evidence)
+        return await synthesize.generate_app(report, evidence, keep_name=keep_name, goal=goal)
     except Exception as e:
         traceback.print_exc()
         return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
