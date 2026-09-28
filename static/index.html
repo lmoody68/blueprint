@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BLUEPRINT</title>
+<style>
+  :root{
+    --bg:#0a0f1e; --panel:#111a30; --panel2:#0d1526; --line:#1e2b47;
+    --ink:#e8eefc; --dim:#8ea0c4; --accent:#38bdf8; --accent2:#7c9cff;
+    --good:#34d399; --warn:#fbbf24; --bad:#f87171; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:38px 38px;background-position:center;background-attachment:fixed;}
+  body::before{content:"";position:fixed;inset:0;background:radial-gradient(ellipse at top,rgba(56,189,248,.10),transparent 60%);pointer-events:none;}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 18px 80px;position:relative}
+  header{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+  .logo{width:40px;height:40px;border:2px solid var(--accent);border-radius:9px;position:relative;flex:0 0 auto;
+    background:linear-gradient(135deg,rgba(56,189,248,.18),transparent)}
+  .logo::before,.logo::after{content:"";position:absolute;background:var(--accent)}
+  .logo::before{left:8px;right:8px;top:13px;height:2px}
+  .logo::after{top:8px;bottom:8px;left:19px;width:2px}
+  h1{font-size:26px;margin:0;letter-spacing:.14em;font-weight:800}
+  .tag{color:var(--dim);font-size:13px;margin:2px 0 20px 54px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
+    border-radius:14px;padding:18px;margin-bottom:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  input[type=text]{flex:1;min-width:220px;background:#060b18;border:1px solid var(--line);color:var(--ink);
+    padding:13px 14px;border-radius:10px;font-size:15px;font-family:var(--mono)}
+  input[type=text]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(56,189,248,.15)}
+  button{background:var(--accent);color:#04121f;border:0;padding:13px 22px;border-radius:10px;font-weight:700;
+    font-size:15px;cursor:pointer;transition:.15s}
+  button:hover{filter:brightness(1.08)} button:disabled{opacity:.5;cursor:not-allowed}
+  .toggle{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:13px;cursor:pointer;user-select:none}
+  .toggle input{accent-color:var(--accent);width:16px;height:16px}
+  .redline{font-size:12px;color:var(--dim);margin-top:12px;border-left:2px solid var(--accent2);padding-left:10px;line-height:1.5}
+  .redline b{color:var(--ink)}
+  .status{display:none;margin-top:14px;color:var(--accent);font-family:var(--mono);font-size:13px}
+  .status.on{display:block}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--accent);
+    border-radius:50%;animation:s .7s linear infinite;vertical-align:-1px;margin-right:6px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  #out{display:none} #out.on{display:block}
+  .tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px;border-bottom:1px solid var(--line);padding-bottom:2px}
+  .tab{background:transparent;color:var(--dim);border:0;border-bottom:2px solid transparent;padding:9px 13px;
+    font-size:13px;font-weight:600;border-radius:0;cursor:pointer}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .pane{display:none} .pane.active{display:block}
+  h3{margin:2px 0 12px;font-size:15px;letter-spacing:.03em}
+  .muted{color:var(--dim);font-size:13px}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:#0b1526;border:1px solid var(--line);
+    border-radius:20px;padding:5px 11px;margin:3px;font-size:12.5px;font-family:var(--mono)}
+  .cat{color:var(--accent2);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em}
+  .conf-high{border-color:rgba(52,211,153,.5)} .conf-medium{border-color:rgba(251,191,36,.4)} .conf-low{border-color:var(--line);opacity:.8}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+  .stat{background:#0b1526;border:1px solid var(--line);border-radius:10px;padding:12px}
+  .stat .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  .stat .v{font-size:15px;margin-top:4px;font-family:var(--mono);word-break:break-word}
+  .scores{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}
+  .score,.bizmodel{background:#0b1526;border:1px solid var(--line);border-radius:12px;padding:14px;flex:1;min-width:170px}
+  .score .k,.bizmodel .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  .score-num{font-size:30px;font-weight:800;font-family:var(--mono);margin-top:2px;line-height:1}
+  .score-max{font-size:14px;color:var(--dim);font-weight:600}
+  .meter{height:7px;background:#060b18;border-radius:5px;overflow:hidden;margin-top:9px}
+  .meter-fill{height:100%;border-radius:5px;transition:width .5s ease}
+  .bizmodel .bm{font-size:22px;font-weight:800;margin-top:4px;color:var(--accent);text-transform:uppercase;letter-spacing:.02em}
+  .step{border-left:2px solid var(--accent);padding:2px 0 2px 14px;margin:0 0 16px}
+  .step .t{font-weight:700;font-size:14.5px} .step .d{color:var(--dim);font-size:13.5px;margin-top:3px;line-height:1.55}
+  .imp{background:#0b1526;border:1px solid var(--line);border-radius:10px;padding:13px;margin-bottom:10px}
+  .imp .t{font-weight:700} .badge{font-size:11px;padding:2px 8px;border-radius:6px;margin-left:6px;font-family:var(--mono)}
+  .b-high{background:rgba(52,211,153,.18);color:var(--good)} .b-medium{background:rgba(251,191,36,.16);color:var(--warn)}
+  .b-low{background:rgba(148,163,184,.14);color:var(--dim)}
+  ul{margin:6px 0;padding-left:20px} li{margin:5px 0;line-height:1.5}
+  pre{background:#060b18;border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;font-size:12px;color:var(--dim)}
+  .mermaid{background:#060b18;border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center}
+  code{font-family:var(--mono);color:var(--accent)}
+  .stack-group{margin-bottom:14px} .stack-group h4{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--accent2)}
+  a{color:var(--accent)}
+  .err{color:var(--bad);font-family:var(--mono);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="logo"></div><h1>BLUEPRINT</h1></header>
+  <p class="tag">Reverse-engineer any app from public signals into a build-and-beat playbook.</p>
+
+  <div class="card">
+    <div class="row">
+      <input id="target" type="text" placeholder="example.com  ·  https://app.example.com  ·  app-store link" autofocus>
+      <label class="toggle"><input type="checkbox" id="active"> Deep recon</label>
+      <button id="go">Analyze</button>
+    </div>
+    <div class="redline">
+      <b>Public signals only.</b> BLUEPRINT infers architecture from observable evidence (fingerprints, headers,
+      DNS/TLS, public GitHub, pricing). It honors robots.txt and does <b>not</b> touch the dark web, decompile
+      binaries, bypass DRM, or scrape behind logins. “Deep recon” adds opt-in GraphQL/endpoint probing.
+    </div>
+    <div class="status" id="status"><span class="spin"></span><span id="statusText">Working…</span></div>
+  </div>
+
+  <div id="out" class="card">
+    <div class="tabs" id="tabs"></div>
+    <div id="panes"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+let mermaidReady = false;
+try { mermaid.initialize({startOnLoad:false, theme:'dark', themeVariables:{background:'#060b18',primaryColor:'#111a30',lineColor:'#38bdf8'}}); mermaidReady = true; } catch(e){}
+
+const STATUSES = ["Fetching target & robots.txt…","Fingerprinting stack…","Resolving DNS / TLS…","Mining public signals…","Synthesizing playbook…"];
+let statusTimer=null;
+function startStatus(){ let i=0; $('#status').classList.add('on'); $('#statusText').textContent=STATUSES[0];
+  statusTimer=setInterval(()=>{ i=(i+1)%STATUSES.length; $('#statusText').textContent=STATUSES[i]; },1800); }
+function stopStatus(){ clearInterval(statusTimer); $('#status').classList.remove('on'); }
+
+$('#go').addEventListener('click', run);
+$('#target').addEventListener('keydown', e=>{ if(e.key==='Enter') run(); });
+
+async function run(){
+  const target = $('#target').value.trim();
+  if(!target) return;
+  $('#go').disabled=true; $('#out').classList.remove('on'); startStatus();
+  try{
+    const r = await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({target, active:$('#active').checked})});
+    const data = await r.json();
+    if(!r.ok){ renderError(data.error||'Request failed'); return; }
+    render(data);
+  }catch(e){ renderError(e.message); }
+  finally{ $('#go').disabled=false; stopStatus(); }
+}
+
+function renderError(msg){
+  $('#out').classList.add('on'); $('#tabs').innerHTML=''; $('#panes').innerHTML='<div class="err">⚠ '+esc(msg)+'</div>';
+}
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+function render(data){
+  const ev = data.evidence||{}, rep = data.report;
+  const panes = [];
+  panes.push(['Overview', overview(ev, rep, data)]);
+  if(rep){
+    panes.push(['Stack', stack(rep)]);
+    panes.push(['Architecture', architecture(rep)]);
+    panes.push(['Build Playbook', playbook(rep)]);
+    panes.push(['Improvements', improvements(rep)]);
+    panes.push(['MVP Clone', mvp(rep)]);
+  }
+  panes.push(['Evidence', evidence(ev)]);
+
+  $('#tabs').innerHTML = panes.map((p,i)=>`<button class="tab ${i===0?'active':''}" data-i="${i}">${p[0]}</button>`).join('');
+  $('#panes').innerHTML = panes.map((p,i)=>`<div class="pane ${i===0?'active':''}" data-i="${i}">${p[1]}</div>`).join('');
+  $('#out').classList.add('on');
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.pane').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active'); document.querySelector('.pane[data-i="'+t.dataset.i+'"]').classList.add('active');
+  });
+  if(mermaidReady){ const el=document.querySelector('.mermaid'); if(el){ try{ mermaid.run({nodes:[el]}); }catch(e){ el.innerHTML='<span class="muted">diagram render failed</span>'; } } }
+}
+
+function scoreCard(label,val,sub){
+  const color = val>=70?'var(--good)':val>=40?'var(--warn)':'var(--bad)';
+  const w = Math.max(3,Math.min(100,val));
+  return `<div class="score"><div class="k">${esc(label)}</div>
+    <div class="score-num" style="color:${color}">${val}<span class="score-max">/100</span></div>
+    <div class="meter"><div class="meter-fill" style="width:${w}%;background:${color}"></div></div>
+    <div class="muted" style="font-size:11px;margin-top:6px;line-height:1.4">${esc(sub)}</div></div>`;
+}
+
+function overview(ev, rep, data){
+  let h='';
+  if(rep&&rep.summary){ h+=`<h3>Summary</h3><p style="line-height:1.6">${esc(rep.summary)}</p>`;
+    h+=`<p class="muted">Overall confidence: <code>${esc(rep.confidence_overall||'?')}</code> · ${data.elapsed_ms||'?'} ms · ${(ev.detections||[]).length} technologies detected</p>`; }
+  if(rep){
+    const cs=rep.composite_score, es=rep.evidence_score||{}, bm=rep.business_model||{};
+    let s='';
+    if(typeof cs==='number') s+=scoreCard('Composite', cs, esc(rep.composite_rationale||'overall build clarity + clonability'));
+    if(typeof es.score==='number') s+=scoreCard('Evidence', es.score, ((es.basis||[]).join(' · '))||'hard public signals gathered');
+    if(bm.type) s+=`<div class="bizmodel"><div class="k">Business model</div><div class="bm">${esc(bm.type)}</div>`+
+      `<div class="muted" style="font-size:11.5px;margin-top:4px">${esc(bm.basis||'')}${bm.evidence?(' · '+esc(bm.evidence)):''}</div></div>`;
+    if(s) h+=`<div class="scores">${s}</div>`;
+  }
+  const f=ev.fetched||{}, n=ev.network||{};
+  h+='<div class="grid" style="margin-top:12px">';
+  h+=stat('Target', ev.host||ev.target);
+  if(f.title) h+=stat('Title', f.title);
+  if(f.status) h+=stat('HTTP', f.status);
+  if(n.ip) h+=stat('IP', n.ip + (n.reverse?(' · '+n.reverse):''));
+  if(n.tls_issuer) h+=stat('TLS issuer', n.tls_issuer);
+  if(ev.robots) h+=stat('robots.txt', ev.robots.note);
+  h+='</div>';
+  if(data.note) h+=`<p class="muted" style="margin-top:12px">ℹ ${esc(data.note)}</p>`;
+  if((ev.phase2_pending||[]).length) h+=`<p class="muted" style="margin-top:10px">Deferred to later phases: ${ev.phase2_pending.map(esc).join(' · ')}</p>`;
+  return h;
+}
+function stat(k,v){ return `<div class="stat"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`; }
+
+function stack(rep){
+  const s=rep.inferred_stack||{}; const order=['frontend','backend','database','infra','third_party'];
+  let h='';
+  for(const g of order){ const items=s[g]||[]; if(!items.length) continue;
+    h+=`<div class="stack-group"><h4>${g.replace('_',' ')}</h4>`;
+    h+=items.map(it=>`<span class="chip conf-${esc(it.confidence||'low')}">${esc(it.tech||it)}${it.basis?` <span class="cat">${esc(it.basis)}</span>`:''}</span>`).join('');
+    h+='</div>';
+  }
+  return h||'<p class="muted">No stack inferred.</p>';
+}
+
+function architecture(rep){
+  const a=rep.architecture||{}; let h='';
+  if(a.description) h+=`<p style="line-height:1.6">${esc(a.description)}</p>`;
+  if(a.mermaid) h+=`<div class="mermaid">${esc(a.mermaid)}</div>`;
+  if((a.components||[]).length){ h+='<h3 style="margin-top:16px">Components</h3><ul>';
+    h+=a.components.map(c=>`<li><b>${esc(c.name)}</b> — ${esc(c.role)}</li>`).join(''); h+='</ul>'; }
+  return h||'<p class="muted">No architecture inferred.</p>';
+}
+
+function playbook(rep){
+  const p=rep.build_playbook||[]; if(!p.length) return '<p class="muted">No playbook.</p>';
+  return p.map((s,i)=>`<div class="step"><div class="t">${i+1}. ${esc(s.step)}</div><div class="d">${esc(s.detail)}${(s.stack||[]).length?`<br><span class="muted">stack: ${s.stack.map(esc).join(', ')}</span>`:''}</div></div>`).join('');
+}
+
+function improvements(rep){
+  const im=rep.improvements||[]; if(!im.length) return '<p class="muted">No improvements.</p>';
+  return im.map(x=>`<div class="imp"><div class="t">${esc(x.title)}
+    <span class="badge b-${esc(x.impact||'low')}">impact ${esc(x.impact||'?')}</span>
+    <span class="badge b-${esc(x.effort||'low')}">effort ${esc(x.effort||'?')}</span></div>
+    <div class="muted" style="margin-top:5px;line-height:1.55">${esc(x.rationale)}</div></div>`).join('');
+}
+
+function mvp(rep){
+  const m=rep.mvp_clone_spec||{}; let h='';
+  if(m.pitch) h+=`<p style="line-height:1.6"><b>Pitch:</b> ${esc(m.pitch)}</p>`;
+  if(m.build_difficulty!=null || m.market_potential){
+    h+='<div class="grid" style="margin:12px 0">';
+    if(m.build_difficulty!=null) h+=stat('Build difficulty', esc(m.build_difficulty)+' / 10');
+    if(m.market_potential) h+=stat('Market potential', esc(m.market_potential));
+    h+='</div>';
+  }
+  if((m.core_features||[]).length){ h+='<h3 style="margin-top:14px">Core features</h3><ul>'+m.core_features.map(f=>`<li>${esc(f)}</li>`).join('')+'</ul>'; }
+  if((m.recommended_stack||[]).length){ h+='<h3 style="margin-top:14px">Recommended stack</h3><div>'+m.recommended_stack.map(s=>`<span class="chip">${esc(s)}</span>`).join('')+'</div>'; }
+  if((m.milestones||[]).length){ h+='<h3 style="margin-top:14px">Milestones</h3><ul>'+m.milestones.map(x=>`<li><b>${esc(x.name)}</b> — ${esc(x.outcome)}</li>`).join('')+'</ul>'; }
+  return h||'<p class="muted">No MVP spec.</p>';
+}
+
+function evidence(ev){
+  let h='';
+  if((ev.detections||[]).length){ h+='<h3>Detected technologies (with evidence)</h3>';
+    h+=ev.detections.map(d=>`<span class="chip conf-${esc(d.confidence)}"><span class="cat">${esc(d.category)}</span> ${esc(d.name)}</span>`).join('');
+    h+='<ul class="muted" style="margin-top:10px">'+ev.detections.map(d=>`<li><b>${esc(d.name)}</b>: ${esc(d.evidence)}</li>`).join('')+'</ul>'; }
+  if((ev.endpoints||[]).length){ h+='<h3 style="margin-top:14px">Endpoints seen in markup</h3><pre>'+ev.endpoints.map(esc).join('\n')+'</pre>'; }
+  if(ev.active_graphql){ h+='<h3 style="margin-top:14px">Active GraphQL probe</h3><pre>'+esc(JSON.stringify(ev.active_graphql,null,2))+'</pre>'; }
+  if(ev.github){ h+='<h3 style="margin-top:14px">Public GitHub</h3><pre>'+esc(JSON.stringify(ev.github,null,2))+'</pre>'; }
+  if(ev.pricing){ h+='<h3 style="margin-top:14px">Pricing signals</h3><pre>'+esc(JSON.stringify({url:ev.pricing.url,price_points:ev.pricing.price_points},null,2))+'</pre>'; }
+  if((ev.third_party_hosts||[]).length){ h+='<h3 style="margin-top:14px">Third-party hosts</h3><pre>'+ev.third_party_hosts.map(esc).join('\n')+'</pre>'; }
+  if(ev.headers){ h+='<h3 style="margin-top:14px">Response headers</h3><pre>'+esc(JSON.stringify(ev.headers,null,2))+'</pre>'; }
+  return h||'<p class="muted">No evidence collected.</p>';
+}
+</script>
+</body>
+</html>
