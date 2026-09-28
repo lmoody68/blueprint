@@ -198,8 +198,28 @@ function cloneStudio(rep){
   if((c.key_files||[]).length){ h+='<h3 style="margin-top:14px">Key files</h3><ul>'+c.key_files.map(f=>`<li><code>${esc(f.path)}</code> — ${esc(f.purpose)}</li>`).join('')+'</ul>'; }
   if((c.setup||[]).length){ h+='<h3 style="margin-top:14px">Setup</h3><pre class="tree">'+c.setup.map(esc).join('\n')+'</pre>'; }
   if((c.env||[]).length){ h+='<h3 style="margin-top:14px">Environment</h3><div>'+c.env.map(e=>`<span class="chip">${esc(e)}</span>`).join('')+'</div>'; }
-  h+='<div style="margin-top:16px"><button class="xbtn" onclick="downloadBrief()">⬇ Download build brief (.md)</button></div>';
+  h+='<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="xbtn" onclick="downloadBrief()">⬇ Download build brief (.md)</button>'
+    +'<button class="xbtn" onclick="copyBuildPrompt()">🛠 Copy build prompt → Emergent / Lovable / Bolt</button></div>';
   return h;
+}
+function buildPrompt(){
+  const ev=LAST.ev, r=LAST.rep||{}, c=r.clone_studio||{};
+  const feats=(r.mvp_clone_spec||{}).core_features||[];
+  let p=`Build a production-ready web app similar to ${ev.host||ev.target}`;
+  if((r.business_model||{}).type) p+=` (a ${r.business_model.type} product)`;
+  p+=`.\n\nWhat it is: ${r.summary||''}\n`;
+  if((c.stack||[]).length) p+=`\nUse this stack: ${c.stack.join(', ')}.\n`;
+  if(feats.length) p+=`\nCore features:\n`+feats.map(f=>'- '+f).join('\n')+'\n';
+  if(c.first_feature) p+=`\nBuild this first (end-to-end): ${c.first_feature}\n`;
+  if(c.file_tree) p+=`\nSuggested project structure:\n${c.file_tree}\n`;
+  p+=`\nInclude authentication, a clean responsive UI, and a working backend with a database. `;
+  p+=`Build it FRESH from scratch — do not copy any proprietary code or assets.`;
+  return p;
+}
+async function copyBuildPrompt(){
+  const t=buildPrompt();
+  try{ await navigator.clipboard.writeText(t); alert('Build prompt copied ✓\nPaste it into Emergent, Lovable, Bolt, or Claude to build the clone.'); }
+  catch(e){ dl(slug()+'.build-prompt.txt', t, 'text/plain'); }
 }
 function chatPane(){
   const qs=['What would be hardest to clone?','How is their real-time layer likely built?','What is their biggest weakness?','Sketch a 2-week MVP plan.'];
