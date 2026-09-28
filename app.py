@@ -79,8 +79,10 @@ async def security_headers(request: Request, call_next):
     resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
-        "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'")
+        # 'unsafe-eval' + blob worker are required by mermaid (the architecture diagram); all other
+        # external script is still refused (only self + cdnjs), and framing/base-uri stay locked.
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com; "
+        "worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'")
     return resp
 
 
