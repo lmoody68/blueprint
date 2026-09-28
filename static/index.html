@@ -85,6 +85,20 @@
   .chatchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
   .qchip{cursor:pointer;background:#0b1526;border:1px dashed var(--line);color:var(--dim);font-family:inherit}
   .qchip:hover{border-color:var(--accent);color:var(--accent)}
+  .bigbtn{background:linear-gradient(135deg,#38bdf8,#7c9cff);color:#04121f;border:0;padding:11px 18px;border-radius:10px;font-weight:800;font-size:14px;cursor:pointer}
+  .bigbtn.sm{padding:7px 13px;font-size:12.5px}
+  .bigbtn:hover{filter:brightness(1.08)}
+  .buildout{margin-top:14px}
+  .building{color:var(--accent);font-family:var(--mono);font-size:13px;padding:10px 0}
+  .projbox{background:#0b1526;border:1px solid var(--line);border-radius:12px;padding:14px}
+  .projhead{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .filelist{display:flex;flex-direction:column;gap:6px}
+  .fileitem{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#060b18}
+  .filehdr{display:flex;justify-content:space-between;align-items:center;padding:8px 11px;cursor:pointer;font-family:var(--mono);font-size:12.5px}
+  .filehdr:hover{background:#0d1830} .fp{color:var(--accent);word-break:break-all} .fx{color:var(--dim);transition:.2s}
+  .fileitem.open .fx{transform:rotate(90deg)}
+  .filebody{display:none;margin:0;border-top:1px solid var(--line);padding:11px;font-size:12px;color:#b9c6e0;white-space:pre;overflow:auto;max-height:360px}
+  .fileitem.open .filebody{display:block}
   .step{border-left:2px solid var(--accent);padding:2px 0 2px 14px;margin:0 0 16px}
   .step .t{font-weight:700;font-size:14.5px} .step .d{color:var(--dim);font-size:13.5px;margin-top:3px;line-height:1.55}
   .imp{background:#0b1526;border:1px solid var(--line);border-radius:10px;padding:13px;margin-bottom:10px}
@@ -126,6 +140,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 let mermaidReady = false;
@@ -198,9 +213,48 @@ function cloneStudio(rep){
   if((c.key_files||[]).length){ h+='<h3 style="margin-top:14px">Key files</h3><ul>'+c.key_files.map(f=>`<li><code>${esc(f.path)}</code> — ${esc(f.purpose)}</li>`).join('')+'</ul>'; }
   if((c.setup||[]).length){ h+='<h3 style="margin-top:14px">Setup</h3><pre class="tree">'+c.setup.map(esc).join('\n')+'</pre>'; }
   if((c.env||[]).length){ h+='<h3 style="margin-top:14px">Environment</h3><div>'+c.env.map(e=>`<span class="chip">${esc(e)}</span>`).join('')+'</div>'; }
-  h+='<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="xbtn" onclick="downloadBrief()">⬇ Download build brief (.md)</button>'
-    +'<button class="xbtn" onclick="copyBuildPrompt()">🛠 Copy build prompt → Emergent / Lovable / Bolt</button></div>';
+  h+='<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    +'<button class="bigbtn" onclick="generateApp()">🚀 Build it with AI</button>'
+    +'<button class="xbtn" onclick="downloadBrief()">⬇ Build brief (.md)</button>'
+    +'<button class="xbtn" onclick="copyBuildPrompt()">🛠 Copy build prompt → Emergent / Lovable / Bolt</button></div>'
+    +'<p class="muted" style="font-size:11.5px;margin-top:6px">“Build it with AI” generates a real, runnable starter project (with your improvements) you can download as a .zip.</p>';
+  h+='<div id="buildOut" class="buildout"></div>';
   return h;
+}
+async function generateApp(){
+  if(!LAST||!LAST.rep) return;
+  const out=document.getElementById('buildOut');
+  out.innerHTML='<div class="building"><span class="spin"></span> Building your app with AI… generating real, runnable code (~15-30s)</div>';
+  try{
+    const r=await fetch('/api/generate_app',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({report:LAST.rep, evidence:LAST.ev})});
+    const p=await r.json();
+    if(p.error){ out.innerHTML='<div class="err">⚠ '+esc(p.error)+'</div>'; return; }
+    LAST.project=p; renderProject(p);
+  }catch(e){ out.innerHTML='<div class="err">⚠ '+esc(e.message)+'</div>'; }
+}
+function renderProject(p){
+  const out=document.getElementById('buildOut'); const files=p.files||[];
+  let h='<div class="projbox"><div class="projhead"><b style="font-size:15px">🚀 '+esc(p.name||'your-app')+'</b>'
+    +'<button class="bigbtn sm" onclick="downloadZip()">⬇ Download project (.zip)</button></div>';
+  if(p.summary) h+='<p class="muted" style="margin:8px 0 10px;line-height:1.5">'+esc(p.summary)+'</p>';
+  if((p.stack||[]).length) h+='<div style="margin-bottom:8px">'+p.stack.map(s=>'<span class="chip">'+esc(s)+'</span>').join('')+'</div>';
+  if((p.run||[]).length) h+='<h4 style="margin:10px 0 5px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent2)">Run it</h4><pre class="tree">'+p.run.map(esc).join('\n')+'</pre>';
+  h+='<h4 style="margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent2)">Files ('+files.length+') — click to expand</h4><div class="filelist">';
+  h+=files.map(f=>'<div class="fileitem"><div class="filehdr" onclick="this.parentNode.classList.toggle(\'open\')"><span class="fp">'+esc(f.path)+'</span><span class="fx">▸</span></div><pre class="filebody">'+esc(f.content||'')+'</pre></div>').join('');
+  h+='</div>';
+  if((p.next_steps||[]).length) h+='<h4 style="margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent2)">Next steps</h4><ul>'+p.next_steps.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ul>';
+  h+='</div>';
+  out.innerHTML=h;
+}
+async function downloadZip(){
+  const p=LAST&&LAST.project; if(!p){ return; }
+  if(!window.JSZip){ dl((p.name||'app')+'.files.json', JSON.stringify(p.files,null,2), 'application/json'); return; }
+  const zip=new JSZip();
+  (p.files||[]).forEach(f=>zip.file(f.path, f.content||''));
+  const blob=await zip.generateAsync({type:'blob'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(p.name||'app')+'.zip'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),3000);
 }
 function buildPrompt(){
   const ev=LAST.ev, r=LAST.rep||{}, c=r.clone_studio||{};

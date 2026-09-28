@@ -91,6 +91,54 @@ async def ask(question: str, report: dict, evidence: dict) -> str:
                           temperature=0.3, max_tokens=800)
 
 
+BUILD_SYSTEM = """You are a senior full-stack engineer. Using the product teardown below, generate a REAL,
+RUNNABLE starter project that clones the product's CORE and bakes in the listed improvements. Build it
+FRESH from scratch — NEVER copy proprietary code, assets, text, or branding from the target.
+
+Focus: implement the ONE most important feature end-to-end (clone_studio.first_feature) plus a working UI
+shell and all the files needed to actually run it. Prefer the recommended stack. Every file must be COMPLETE
+and correct (no "// TODO fill in"). Keep it lean: 6-10 files.
+
+Return ONLY this JSON:
+{
+  "name": "kebab-case-project-name",
+  "summary": "1-2 sentences: what this starter builds and which improvements it includes",
+  "stack": ["the stack used"],
+  "run": ["ordered shell commands to install and run it"],
+  "files": [{"path": "relative/path", "content": "the FULL file contents"}],
+  "next_steps": ["what to build next to grow it toward the full product"]
+}
+Include at minimum: a README.md (with run steps), a manifest (package.json / requirements.txt), the app
+entry point, the first-feature implementation, and any config. Output valid JSON only."""
+
+
+async def generate_app(report: dict, evidence: dict) -> dict:
+    """AI-build: turn the teardown into a runnable starter project (files) — the 'Build it with AI' button."""
+    ctx = {
+        "target": evidence.get("target"),
+        "summary": report.get("summary"),
+        "business_model": report.get("business_model"),
+        "recommended_stack": (report.get("clone_studio") or {}).get("stack"),
+        "clone_studio": report.get("clone_studio"),
+        "mvp_clone_spec": report.get("mvp_clone_spec"),
+        "improvements": (report.get("improvements") or [])[:3],
+        "inferred_stack": report.get("inferred_stack"),
+    }
+    user = "PRODUCT TEARDOWN:\n" + json.dumps(ctx, ensure_ascii=False)[:8000]
+    reply = await llm.chat([{"role": "system", "content": BUILD_SYSTEM}, {"role": "user", "content": user}],
+                           temperature=0.3, max_tokens=8000, json_mode=True)
+    try:
+        proj = llm.extract_json(reply)
+    except ValueError:
+        return {"error": "code generation returned unparseable output", "raw": reply[:1500]}
+    # normalize + guard: keep it to a sane file count / size
+    files = [f for f in (proj.get("files") or []) if isinstance(f, dict) and f.get("path")][:12]
+    for f in files:
+        f["content"] = str(f.get("content") or "")[:20000]
+    proj["files"] = files
+    return proj
+
+
 def evidence_score(ev: dict) -> dict:
     """Deterministic 0-100 score of how much HARD public evidence we actually gathered — computed from
     the signals, never guessed by the LLM. This is BLUEPRINT's honesty gauge: a confident-looking

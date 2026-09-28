@@ -39,7 +39,8 @@ def get_groq_key() -> str:
     return _KEY_CACHE
 
 
-_RETRYABLE = {429, 500, 502, 503, 520, 524}
+_RETRYABLE = {400, 429, 500, 502, 503, 520, 524}   # 400 included: Groq's gpt-oss intermittently 400s on a
+                                                    # valid payload that then succeeds on retry (observed).
 
 
 async def chat(messages: list[dict], *, model: str | None = None, temperature: float = 0.3,

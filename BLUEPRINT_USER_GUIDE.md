@@ -33,19 +33,32 @@ That's it. Everything below explains what you're looking at.
 - **Improvements** — ranked ways to build it *better* (each tagged impact + effort).
 - **MVP Clone** — a lean first-version spec: pitch, core features, **build difficulty (1-10)**, **market potential ($–$$$)**, milestones.
 - **Clone Studio** ⭐ — a concrete, buildable brief: recommended stack, a real **project file tree**, key
-  files, setup commands, and environment variables. Two buttons:
-  - **⬇ Download build brief (.md)** — save the brief.
-  - **🛠 Copy build prompt** — copies a ready-to-paste prompt for an AI app builder (**Emergent, Lovable,
-    Bolt, or Claude**) so you can actually *build the clone* from the teardown.
+  files, setup commands, and environment variables. Three ways to act on it:
+  - **🚀 Build it with AI** — the headline. **One click and BLUEPRINT's AI writes a real, runnable starter
+    project for you** — actual code files (README, package manifest, app entry point, the core feature
+    implemented end-to-end, and config) that clone the product's core **with your top improvements baked in**.
+    The generated project appears as an expandable file browser (click any file to read it), and
+    **⬇ Download project (.zip)** saves the whole thing. Unzip it, follow the README's run steps, and it runs.
+    This is the reverse-engineer → *rebuild* loop, fully automated — analysis straight to working code.
+  - **🛠 Copy build prompt** — copies a ready-to-paste prompt for an external AI app builder (**Emergent,
+    Lovable, Bolt, or Claude**) if you'd rather build it there.
+  - **⬇ Download build brief (.md)** — save the written brief to build from by hand.
 - **Ask BLUEPRINT** 💬 — chat with the teardown. Ask *"How would I build their auth?"*, *"What's the likely
   DB schema?"*, *"What's their biggest weakness?"* — answers are grounded in the gathered evidence.
 - **Evidence** — the receipts: every detected technology with the exact header/cookie/asset that proved it,
   endpoints found, public GitHub repos, pricing, and response headers.
 
 **Export anytime** (top-right of the tabs):
-- **📄 Report** — opens a clean, professional, print-styled report in a new tab, with **🖨 Print / Save as PDF**
-  and **⬇ Download HTML** buttons. This is the shareable deliverable — hand it to a client or save a PDF.
-- **⬇ MD** — the whole teardown as Markdown. **⬇ JSON** — the raw report + evidence data.
+- **📄 Report** — opens a clean, professional, **print-styled report** in a new tab. It compiles the *entire*
+  teardown into one shareable document: the plain-English summary, the four headline scores
+  (Composite / Evidence / business model / confidence), the target's key facts (URL, title, IP, TLS issuer,
+  robots.txt), the full inferred stack, the architecture, the step-by-step build playbook, the ranked
+  improvements, the MVP spec, the complete Clone Studio build brief (file tree + setup + env), comparable
+  products, the evidence table (every detection and what proved it), and the red-lines disclaimer. Inside the
+  report are **🖨 Print / Save as PDF** and **⬇ Download HTML** buttons — so you can save a polished PDF or a
+  standalone HTML file to hand to a client, share with a team, or attach to a job application.
+- **⬇ MD** — the whole teardown as Markdown (great for a repo or notes). **⬇ JSON** — the raw report +
+  evidence data (for feeding into other tools).
 
 ---
 

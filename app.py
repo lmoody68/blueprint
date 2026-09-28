@@ -157,6 +157,28 @@ async def chat(req: Request):
         return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
 
 
+@app.post("/api/generate_app")
+async def generate_app(req: Request):
+    ip = _client_ip(req)
+    if not _rate_ok(ip, "b:", int(os.getenv("BLUEPRINT_BUILD_PER_MIN", "4"))):
+        return JSONResponse({"error": "Rate limit — code generation is heavy; wait a moment."}, status_code=429)
+    try:
+        body = await _body(req)
+    except ValueError:
+        return JSONResponse({"error": "Request too large."}, status_code=413)
+    report = body.get("report") or {}
+    evidence = body.get("evidence") or {}
+    if not report:
+        return JSONResponse({"error": "Run a teardown first, then build."}, status_code=400)
+    if not _global_ok():
+        return JSONResponse({"error": "Daily cap reached — resets tomorrow."}, status_code=429)
+    try:
+        return await synthesize.generate_app(report, evidence)
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
 @app.get("/")
 async def index():
     return FileResponse(os.path.join(STATIC, "index.html"))
