@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BLUEPRINT — User Guide</title>
+<style>
+  :root{
+    --bg:#0a0f1e; --panel:#111a30; --panel2:#0d1526; --line:#1e2b47;
+    --ink:#e8eefc; --dim:#8ea0c4; --accent:#38bdf8; --accent2:#7c9cff;
+    --good:#34d399; --warn:#fbbf24; --bad:#f87171; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);line-height:1.65;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:38px 38px;background-position:center;background-attachment:fixed;}
+  body::before{content:"";position:fixed;inset:0;background:radial-gradient(ellipse at top,rgba(56,189,248,.10),transparent 60%);pointer-events:none;}
+  .wrap{max-width:860px;margin:0 auto;padding:26px 18px 90px;position:relative}
+  .top{display:flex;align-items:center;gap:13px;margin-bottom:4px}
+  .logo{width:36px;height:36px;border:2px solid var(--accent);border-radius:9px;position:relative;flex:0 0 auto;background:linear-gradient(135deg,rgba(56,189,248,.18),transparent)}
+  .logo::before,.logo::after{content:"";position:absolute;background:var(--accent)}
+  .logo::before{left:7px;right:7px;top:12px;height:2px}
+  .logo::after{top:7px;bottom:7px;left:17px;width:2px}
+  h1{font-size:23px;margin:0;letter-spacing:.1em;font-weight:800}
+  h1 small{display:block;font-size:12.5px;letter-spacing:.04em;color:var(--dim);font-weight:600;margin-top:3px}
+  .back{margin-left:auto;color:var(--accent);text-decoration:none;font-size:13px;font-weight:700;border:1px solid var(--line);padding:7px 13px;border-radius:9px;white-space:nowrap}
+  .back:hover{border-color:var(--accent)}
+  .lede{color:var(--dim);font-size:14.5px;margin:16px 0 22px}
+  .lede b{color:var(--ink)}
+  h2{font-size:17px;margin:30px 0 10px;padding-bottom:7px;border-bottom:1px solid var(--line);letter-spacing:.02em}
+  h2 .n{color:var(--accent);font-family:var(--mono);margin-right:8px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:14px 0}
+  code{background:#060b18;color:#9fe0ff;padding:2px 6px;border-radius:5px;font-family:var(--mono);font-size:12.5px}
+  b.tabname{color:var(--accent);font-weight:700}
+  ul{padding-left:20px;margin:8px 0} li{margin:6px 0}
+  ol{padding-left:20px} ol li{margin:7px 0}
+  .step{display:flex;gap:11px;align-items:flex-start;margin:9px 0}
+  .step .num{flex:0 0 auto;width:24px;height:24px;border-radius:50%;background:var(--accent);color:#04121f;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12.5px}
+  .redline{border-left:2px solid var(--accent2);padding:4px 0 4px 13px;color:var(--dim);font-size:13.5px}
+  .redline b{color:var(--ink)}
+  .star{color:var(--warn)}
+  a{color:var(--accent2)}
+  .foot{color:var(--dim);font-size:12.5px;margin-top:34px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="logo"></div>
+    <h1>BLUEPRINT<small>User Guide</small></h1>
+    <a class="back" href="/">← Back to app</a>
+  </div>
+
+  <p class="lede"><b>Reverse-engineer any app from public signals into a build-and-beat playbook.</b> Point BLUEPRINT at any product — a website, SaaS, or app — and it infers <b>how it was likely built</b>, purely from signals a browser can already see, then hands you a step-by-step plan to build a better version. Every claim is backed by the exact evidence that proved it.</p>
+
+  <h2><span class="n">1</span>The 30-second version</h2>
+  <div class="step"><div class="num">1</div><div>Open the app and type a target — e.g. <code>linear.app</code>, <code>notion.so</code>, <code>stripe.com</code> (a domain, a full URL, or an app-store link).</div></div>
+  <div class="step"><div class="num">2</div><div><i>(Optional)</i> tick <b class="tabname">Deep recon</b> for a more thorough scan (probes API endpoints + JavaScript bundles).</div></div>
+  <div class="step"><div class="num">3</div><div>Click <b class="tabname">Analyze</b>. In ~10–15 seconds you get a full teardown across the tabs below.</div></div>
+
+  <h2><span class="n">2</span>What each tab shows</h2>
+  <div class="card">
+  <ul>
+    <li><b class="tabname">Overview</b> — a plain-English summary plus two scores and the business model.
+      <ul>
+        <li><b>Composite (0–100):</b> how well-understood <i>and</i> clonable the app is.</li>
+        <li><b>Evidence (0–100):</b> how much <i>hard</i> public evidence was gathered — it shows its work (<code>+14 public GitHub</code>, <code>+8 pricing</code>…). A confident read on thin evidence says so.</li>
+        <li><b>Business model:</b> SaaS / B2B / B2C / marketplace, inferred from pricing + sign-in signals.</li>
+        <li><b>Comparables:</b> 2–3 real competitors so you see the landscape.</li>
+      </ul>
+    </li>
+    <li><b class="tabname">Stack</b> — inferred frontend / backend / database / infra / third-party tech, each tagged <b>observed</b> or <b>inferred</b>, with a confidence level.</li>
+    <li><b class="tabname">Architecture</b> — how the pieces fit together, plus a diagram.</li>
+    <li><b class="tabname">Build Playbook</b> — the ordered steps to recreate a comparable app.</li>
+    <li><b class="tabname">Improvements</b> — ranked ways to build it <i>better</i> (each tagged impact + effort).</li>
+    <li><b class="tabname">MVP Clone</b> — a lean first-version spec: pitch, core features, build difficulty (1–10), market potential ($–$$$), milestones.</li>
+    <li><b class="tabname">Clone Studio</b> <span class="star">★</span> — a concrete, buildable brief: recommended stack, a real project file tree, key files, setup commands, and env vars. Three ways to act:
+      <ul>
+        <li><b>🚀 Build it with AI</b> — one click and BLUEPRINT's AI writes a real, runnable starter project (actual code files, core feature implemented end-to-end) <b>with your top improvements baked in</b>, as an expandable file browser + <b>⬇ Download project (.zip)</b>.
+          <br><span class="muted">Helping a friend with <i>their</i> app? Set <b>Goal</b> to Improve / Fix / Redesign and put their app's name in <b>“Keep app name”</b> — BLUEPRINT rebuilds <i>their</i> app, keeping its identity, so you can hand it back.</span></li>
+        <li><b>🛠 Copy build prompt</b> — a ready-to-paste prompt for an external AI builder (Emergent, Lovable, Bolt, or Claude).</li>
+        <li><b>⬇ Download build brief (.md)</b> — the written brief to build from by hand.</li>
+      </ul>
+    </li>
+    <li><b class="tabname">Ask BLUEPRINT</b> 💬 — chat with the teardown. Ask <i>“How would I build their auth?”</i>, <i>“What's the likely DB schema?”</i>, <i>“What's their biggest weakness?”</i> — answers are grounded in the gathered evidence.</li>
+    <li><b class="tabname">Evidence</b> — the receipts: every detected technology with the exact header/cookie/asset that proved it, endpoints, public GitHub, pricing, response headers.</li>
+  </ul>
+  </div>
+
+  <p><b>Export anytime</b> (top-right of the tabs):</p>
+  <ul>
+    <li><b class="tabname">📄 Report</b> — opens a clean, <b>print-styled report</b> in a new tab compiling the <i>entire</i> teardown into one shareable document, with <b>🖨 Print / Save as PDF</b> and <b>⬇ Download HTML</b> inside — hand it to a client, a team, or attach it to a job application.</li>
+    <li><b class="tabname">⬇ MD</b> — the whole teardown as Markdown. <b class="tabname">⬇ JSON</b> — the raw report + evidence data for other tools.</li>
+  </ul>
+
+  <h2><span class="n">3</span>Deep recon (the checkbox)</h2>
+  <p>Leave it off for a fast passive scan. Tick it to also probe for an open <b>GraphQL</b> schema and <b>crawl the app's JavaScript bundles</b> to surface API endpoints the homepage didn't reveal. Slightly slower, more thorough.</p>
+
+  <h2><span class="n">4</span>Mobile apps</h2>
+  <p>Paste a <b>Google Play</b> or <b>App Store</b> link and BLUEPRINT reads the public listing (name, description, framework hints) and infers the likely build. <span class="muted">App internals live in the binary, which BLUEPRINT never opens — so mobile confidence is lower unless the listing leaks framework hints.</span></p>
+
+  <h2><span class="n">5</span>What BLUEPRINT will <u>not</u> do (by design)</h2>
+  <div class="redline">It works from <b>public signals only</b>. It honors <code>robots.txt</code>, keeps deep-recon opt-in, and enforces hard red lines in code: <b>no dark web, no decompiling apps, no bypassing DRM, no scraping behind logins, and it never copies proprietary code</b> — it <i>infers</i> an architecture, it doesn't lift anyone's IP. That's what makes it safe to demo and to build on.</div>
+
+  <h2><span class="n">6</span>Tips</h2>
+  <ul>
+    <li>Marketing homepages score higher than bare app shells (more public signals to read).</li>
+    <li>Use <b class="tabname">Ask BLUEPRINT</b> to go deeper on any one piece before you start building.</li>
+    <li>Use <b class="tabname">Clone Studio → Copy build prompt</b> to jump straight from “how it's built” to actually building it.</li>
+    <li>If you hit a rate-limit message, wait a minute — it protects the shared AI key.</li>
+  </ul>
+
+  <h2><span class="n">7</span>Troubleshooting</h2>
+  <ul>
+    <li><b>“blocked (SSRF guard)”</b> — you aimed it at a private/internal address; that's intentionally refused.</li>
+    <li><b>“Daily cap reached”</b> — the shared analysis budget resets tomorrow.</li>
+    <li><b>Diagram didn't draw</b> — the rest of the report is unaffected; reload and re-run.</li>
+  </ul>
+
+  <p class="foot">BLUEPRINT · <a href="https://blueprint.mac-vision.com">blueprint.mac-vision.com</a> · built by Leslie Moody · inferred from public signals only</p>
+</div>
+</body>
+</html>

@@ -25,6 +25,8 @@
   .logo::after{top:8px;bottom:8px;left:19px;width:2px}
   h1{font-size:26px;margin:0;letter-spacing:.14em;font-weight:800}
   .tag{color:var(--dim);font-size:13px;margin:2px 0 20px 54px}
+  .guidelink{margin-left:auto;color:var(--accent);text-decoration:none;font-size:13px;font-weight:700;border:1px solid var(--line);padding:7px 13px;border-radius:9px;white-space:nowrap}
+  .guidelink:hover{border-color:var(--accent)}
   .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
     border-radius:14px;padding:18px;margin-bottom:16px}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
@@ -121,7 +123,7 @@
 </head>
 <body>
 <div class="wrap">
-  <header><div class="logo"></div><h1>BLUEPRINT</h1></header>
+  <header><div class="logo"></div><h1>BLUEPRINT</h1><a class="guidelink" href="/static/guide.html">📖 Guide</a></header>
   <p class="tag">Reverse-engineer any app from public signals into a build-and-beat playbook.</p>
 
   <div class="card">
@@ -178,6 +180,18 @@ function renderError(msg){
   $('#out').classList.add('on'); $('#tabs').innerHTML=''; $('#panes').innerHTML='<div class="err">⚠ '+esc(msg)+'</div>';
 }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+// Repair LLM-generated mermaid: quote node labels that contain parens/specials, which otherwise crash the parser
+// (e.g. B[PostgreSQL (Supabase)] -> B["PostgreSQL (Supabase)"]). Handles [..] and {..} node shapes.
+function sanitizeMermaid(src){
+  if(!src) return src;
+  const RISKY = /[()"'&<>|;]/;
+  const q = (id,o,c,label)=>{ label=label.trim();
+    if(!label || (label[0]==='"' && label[label.length-1]==='"')) return id+o+label+c;
+    return RISKY.test(label) ? id+o+'"'+label.replace(/"/g,"'")+'"'+c : id+o+label+c; };
+  src = src.replace(/(\w+)\[([^\[\]]*)\]/g, (m,id,label)=>q(id,'[',']',label));
+  src = src.replace(/(\w+)\{([^{}]*)\}/g, (m,id,label)=>q(id,'{','}',label));
+  return src;
+}
 
 let LAST=null;
 function render(data){
@@ -205,7 +219,9 @@ function render(data){
     t.classList.add('active'); document.querySelector('.pane[data-i="'+t.dataset.i+'"]').classList.add('active');
   });
   const cf=document.getElementById('chatForm'); if(cf) cf.onsubmit=onChat;
-  if(mermaidReady){ const el=document.querySelector('.mermaid'); if(el){ try{ mermaid.run({nodes:[el]}); }catch(e){ el.innerHTML='<span class="muted">diagram render failed</span>'; } } }
+  if(mermaidReady){ const el=document.querySelector('.mermaid'); if(el){
+    const fallback=()=>{ el.innerHTML='<span class="muted">(diagram unavailable — see Components below)</span>'; };
+    try{ const p=mermaid.run({nodes:[el]}); if(p&&p.catch) p.catch(fallback); }catch(e){ fallback(); } } }
 }
 
 function cloneStudio(rep){
@@ -466,7 +482,7 @@ function stack(rep){
 function architecture(rep){
   const a=rep.architecture||{}; let h='';
   if(a.description) h+=`<p style="line-height:1.6">${esc(a.description)}</p>`;
-  if(a.mermaid) h+=`<div class="mermaid">${esc(a.mermaid)}</div>`;
+  if(a.mermaid) h+=`<div class="mermaid">${esc(sanitizeMermaid(a.mermaid))}</div>`;
   if((a.components||[]).length){ h+='<h3 style="margin-top:16px">Components</h3><ul>';
     h+=a.components.map(c=>`<li><b>${esc(c.name)}</b> — ${esc(c.role)}</li>`).join(''); h+='</ul>'; }
   return h||'<p class="muted">No architecture inferred.</p>';
