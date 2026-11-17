@@ -248,8 +248,10 @@ async def run_audit(target: str, walk: bool = True) -> dict:
                              "isn't installed here. Run it locally, or install with `playwright install chromium`.",
                     "detail": f"{type(e).__name__}: {str(e)[:160]}", "target": target}
         try:
-            # desktop full audit
-            dctx = await browser.new_context(viewport={"width": 1366, "height": 900},
+            # desktop full audit. bypass_csp so our axe-core harness can inject on strict-CSP pages
+            # (script-src 'self'); otherwise the page's CSP blocks the injection — which both breaks the
+            # a11y scan AND shows up as a FALSE "inline script blocked" console error against the target.
+            dctx = await browser.new_context(viewport={"width": 1366, "height": 900}, bypass_csp=True,
                                              user_agent="Mozilla/5.0 (BLUEPRINT-Audit; +read-only)")
             result["pages"].append(await _audit_page(dctx, url, "landing (desktop)", mobile=False, full=True))
             # SPA view discovery + walk (on desktop context)
@@ -266,7 +268,7 @@ async def run_audit(target: str, walk: bool = True) -> dict:
                     result["views_discovered"] = len(labels)
             await dctx.close()
             # mobile full audit (tap targets)
-            mctx = await browser.new_context(viewport={"width": 390, "height": 844},
+            mctx = await browser.new_context(viewport={"width": 390, "height": 844}, bypass_csp=True,
                                              is_mobile=True, has_touch=True,
                                              user_agent="Mozilla/5.0 (iPhone; BLUEPRINT-Audit; +read-only)")
             result["pages"].append(await _audit_page(mctx, url, "landing (mobile)", mobile=True, full=True))
