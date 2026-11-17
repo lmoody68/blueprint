@@ -36,6 +36,7 @@ _VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "ax
 NAV_TIMEOUT = int(os.getenv("BLUEPRINT_AUDIT_NAV_MS", "35000"))
 SETTLE_MS = int(os.getenv("BLUEPRINT_AUDIT_SETTLE_MS", "3500"))
 MAX_VIEWS = int(os.getenv("BLUEPRINT_AUDIT_MAX_VIEWS", "8"))
+MAX_PAGES = int(os.getenv("BLUEPRINT_AUDIT_MAX_PAGES", "4"))   # distinct same-origin URLs to crawl + audit
 TAP_MIN = 44
 EXECUTABLE = os.getenv("BLUEPRINT_AUDIT_CHROME", "")  # optional system Chrome path (deploy)
 
@@ -83,6 +84,22 @@ _MEASURE_JS = r"""
       .map(r => ({ url: (r.name||'').slice(0,120), kb: Math.round((r.transferSize||0)/1024), type: r.initiatorType }))
       .filter(r => r.kb > 0).sort((a,b)=>b.kb-a.kb).slice(0,6);
   } catch(e) { out.perf = null; out.heavy = []; }
+  // horizontal overflow (content wider than the viewport → sideways scroll, esp. on mobile)
+  try {
+    const de = document.documentElement;
+    out.scrollWidth = de.scrollWidth; out.innerWidth = window.innerWidth;
+    out.overflowX = de.scrollWidth > window.innerWidth + 4;
+    if (out.overflowX) {
+      // find the widest offending elements
+      const vw = window.innerWidth; const wide = [];
+      for (const el of document.querySelectorAll('body *')) {
+        const r = el.getBoundingClientRect();
+        if (r.right > vw + 4 && r.width > 40) wide.push({ w: Math.round(r.width), right: Math.round(r.right),
+          tag: el.tagName.toLowerCase(), cls: (el.className||'').toString().slice(0,30) });
+      }
+      out.overflowCulprits = wide.sort((a,b)=>b.right-a.right).slice(0,4);
+    }
+  } catch(e) {}
   // mixed content (http sub-resources on https page)
   if (location.protocol === 'https:') {
     out.mixedContent = performance.getEntriesByType('resource')
@@ -193,6 +210,34 @@ async def _discover_views(page) -> list:
         return []
 
 
+async def _discover_links(context, url: str, host: str) -> list:
+    """Find distinct same-origin page URLs linked from the landing page (for the multi-page crawl)."""
+    page = await context.new_page()
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+        await page.wait_for_timeout(2000)
+        hrefs = await page.evaluate("""(host) => {
+          const seen = new Set(); const out = [];
+          for (const a of document.querySelectorAll('a[href]')) {
+            let u; try { u = new URL(a.href, location.href); } catch(e) { continue; }
+            if (u.host !== host) continue;                       // same-origin only
+            if (!/^https?:/.test(u.protocol)) continue;
+            u.hash = '';
+            const key = u.pathname.replace(/\\/$/, '');
+            if (key === '' || key === location.pathname.replace(/\\/$/,'')) continue;  // skip landing
+            if (seen.has(key)) continue; seen.add(key);
+            if (/\\.(pdf|zip|png|jpe?g|svg|gif|mp4|webm|css|js|ico)$/i.test(u.pathname)) continue;  // skip assets
+            out.push(u.origin + u.pathname);
+          }
+          return out;
+        }""", host)
+        return hrefs or []
+    except Exception:
+        return []
+    finally:
+        await page.close()
+
+
 async def _walk_views(context, url: str, labels: list) -> list:
     """Click each in-app nav item and record per-view runtime errors (lightweight)."""
     page = await context.new_page()
@@ -254,6 +299,15 @@ async def run_audit(target: str, walk: bool = True) -> dict:
             dctx = await browser.new_context(viewport={"width": 1366, "height": 900}, bypass_csp=True,
                                              user_agent="Mozilla/5.0 (BLUEPRINT-Audit; +read-only)")
             result["pages"].append(await _audit_page(dctx, url, "landing (desktop)", mobile=False, full=True))
+            # MULTI-URL CRAWL — follow distinct same-origin links and audit a few real routes (a SPA view-walk
+            # misses multi-PAGE sites; this is how we catch per-page h1/label/meta issues like Conferra does).
+            if walk and MAX_PAGES > 0:
+                links = await _discover_links(dctx, url, host)
+                for i, lk in enumerate(links[:MAX_PAGES]):
+                    result["pages"].append(await _audit_page(dctx, lk, f"page: {lk.split(host,1)[-1][:40] or '/'}",
+                                                             mobile=False, full=True))
+                if links:
+                    result["pages_crawled"] = len(links[:MAX_PAGES]) + 1
             # SPA view discovery + walk (on desktop context)
             if walk:
                 disc_page = await dctx.new_page()
@@ -337,6 +391,17 @@ def _derive_findings(r: dict) -> list:
                   "detail": f"Links/buttons smaller than {TAP_MIN}px are hard to tap (WCAG 2.5.5).",
                   "evidence": [f"{t['text'] or '(no text)'} — {t['w']}×{t['h']}px" for t in tap[:8]]})
 
+    # horizontal overflow on mobile (sideways scroll — content wider than the screen)
+    mm = mobile.get("measure") or {}
+    if mm.get("overflowX"):
+        ev = [f"content {mm.get('scrollWidth','?')}px wide on a {mm.get('innerWidth','?')}px screen"]
+        ev += [f"{c['tag']}.{c['cls']} extends to {c['right']}px (w={c['w']})" for c in mm.get("overflowCulprits", [])[:3]]
+        f.append({"id": "overflowx", "severity": "high", "category": "mobile ux",
+                  "title": "Page scrolls sideways on mobile",
+                  "detail": "Content is wider than the phone viewport, forcing horizontal scroll — phone users "
+                            "struggle to read/tap and many leave. Usually one fixed-width element.",
+                  "evidence": ev})
+
     # performance
     perf = (desktop.get("measure") or {}).get("perf") or {}
     if perf:
@@ -353,15 +418,19 @@ def _derive_findings(r: dict) -> list:
                       "detail": "Measured navigation timing indicates slow first paint or a large transfer.",
                       "evidence": ev})
 
-    # SEO / semantics basics
-    m = desktop.get("measure") or {}
+    # SEO / semantics basics — aggregated across the landing + every crawled page
     basics = []
-    if not m.get("metaDescription"): basics.append("no <meta name=description>")
-    if not m.get("lang"): basics.append("no <html lang>")
-    if m.get("h1Count", 0) == 0: basics.append("no <h1> on landing")
-    if m.get("h1Count", 0) > 1: basics.append(f"{m['h1Count']} <h1> tags (should be 1)")
-    if not m.get("viewportMeta"): basics.append("no responsive viewport meta")
-    if m.get("imgNoAlt"): basics.append(f"{m['imgNoAlt']} image(s) missing alt")
+    desk_pages = [p for p in r["pages"] if not p.get("mobile")]
+    for p in desk_pages:
+        m = p.get("measure") or {}
+        where = p.get("label", "").replace("page: ", "").replace("landing (desktop)", "landing")
+        if m.get("h1Count", 0) == 0: basics.append(f"no <h1> on {where}")
+        elif m.get("h1Count", 0) > 1: basics.append(f"{m['h1Count']} <h1> on {where} (should be 1)")
+        if not m.get("metaDescription"): basics.append(f"no <meta description> on {where}")
+        if m.get("imgNoAlt"): basics.append(f"{m['imgNoAlt']} image(s) missing alt on {where}")
+    m0 = desktop.get("measure") or {}
+    if not m0.get("lang"): basics.append("no <html lang>")
+    if not m0.get("viewportMeta"): basics.append("no responsive viewport meta")
     if basics:
         f.append({"id": "basics", "severity": "low", "category": "seo/semantics",
                   "title": f"{len(basics)} page-hygiene issue(s)",
@@ -393,6 +462,7 @@ def _health_score(r: dict) -> dict:
     axe_ct = len({v["id"] for p in r["pages"] for v in p.get("axe", [])})
     axe_serious = len({v["id"] for p in r["pages"] for v in p.get("axe", []) if v["impact"] in ("critical", "serious")})
     tap = sum(len(p.get("tap_small", [])) for p in r["pages"])
+    overflow = any((p.get("measure") or {}).get("overflowX") for p in r["pages"])
     bad_views = len([v for v in r.get("views", []) if not v.get("ok")])
     if net:
         d = min(30, net * 6); score -= d; basis.append(f"-{d} {net} failed request(s)")
@@ -404,6 +474,8 @@ def _health_score(r: dict) -> dict:
         d = min(8, (axe_ct - axe_serious) * 2); score -= d; basis.append(f"-{d} {axe_ct-axe_serious} minor a11y")
     if tap:
         d = min(10, tap); score -= d; basis.append(f"-{d} {tap} small tap target(s)")
+    if overflow:
+        score -= 10; basis.append("-10 sideways scroll on mobile")
     if bad_views:
         d = min(20, bad_views * 5); score -= d; basis.append(f"-{d} {bad_views} broken view(s)")
     return {"score": max(0, score), "basis": basis}
