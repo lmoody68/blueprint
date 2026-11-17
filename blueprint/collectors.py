@@ -7,6 +7,7 @@ Red lines enforced here, not just documented:
   * "active" probes (endpoint discovery, GraphQL introspection) run ONLY when caller opts in.
 """
 from __future__ import annotations
+import os
 import re
 import ssl
 import socket
@@ -37,28 +38,53 @@ def host_of(url: str) -> str:
     return urllib.parse.urlparse(url).hostname or ""
 
 
+# Cloud-metadata endpoints — ALWAYS blocked, even in local-dev mode (defense in depth).
+_METADATA_HOSTS = ("metadata", "metadata.google.internal")
+_METADATA_IPS = ("169.254.169.254", "fd00:ec2::254")
+
+
+def local_mode() -> bool:
+    """True only when BLUEPRINT_ALLOW_LOCAL is explicitly set. Default-closed: the hosted endpoint
+    never sets it, so production stays fully SSRF-guarded. Set it ONLY on your own machine to audit
+    local dev builds (localhost:3000, a LAN dev server, etc.)."""
+    return os.getenv("BLUEPRINT_ALLOW_LOCAL", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def public_host_ok(host: str) -> tuple[bool, str]:
     """SSRF GUARD — resolve the target and refuse anything that isn't a public IP.
     BLUEPRINT fetches user-supplied URLs server-side, so without this a caller could aim it at cloud
     metadata (169.254.169.254), localhost, or the internal LAN (192.168/10/172.16) to probe or exfiltrate.
-    We block loopback, private, link-local, reserved, multicast, and unspecified addresses (v4 and v6)."""
+    We block loopback, private, link-local, reserved, multicast, and unspecified addresses (v4 and v6).
+
+    LOCAL-DEV MODE (BLUEPRINT_ALLOW_LOCAL): opt-in, for auditing your own local builds. It permits
+    loopback/private/link-local targets, but cloud-metadata hosts/IPs stay blocked no matter what."""
     if not host:
         return False, "no host in target"
-    if host.lower() in ("localhost", "ip6-localhost", "metadata", "metadata.google.internal"):
+    h = host.lower()
+    # Metadata hostnames are blocked unconditionally — even in local mode.
+    if h in _METADATA_HOSTS:
+        return False, f"blocked host '{host}' (SSRF guard)"
+    local = local_mode()
+    if not local and h in ("localhost", "ip6-localhost"):
         return False, f"blocked host '{host}' (SSRF guard)"
     try:
         ips = {info[4][0] for info in socket.getaddrinfo(host, None)}
     except Exception as e:
         return False, f"could not resolve host ({type(e).__name__})"
     for ip in ips:
+        bare = ip.split("%")[0]
+        if bare in _METADATA_IPS:                              # metadata IP — blocked even in local mode
+            return False, f"blocked metadata address ({ip}) (SSRF guard)"
         try:
-            addr = ipaddress.ip_address(ip.split("%")[0])
+            addr = ipaddress.ip_address(bare)
         except ValueError:
             continue
         if (addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
                 or addr.is_multicast or addr.is_unspecified):
+            if local:
+                continue                                       # local-dev mode: permit this private/loopback target
             return False, f"target resolves to a non-public address ({ip}) — blocked (SSRF guard)"
-    return True, "public"
+    return True, "local-dev mode (BLUEPRINT_ALLOW_LOCAL)" if local else "public"
 
 
 async def _robots_ok(client: httpx.AsyncClient, base: str, path: str = "/") -> tuple[bool, str]:
