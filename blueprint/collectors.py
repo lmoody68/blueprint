@@ -238,8 +238,13 @@ async def analyze_web(target: str, active: bool = False) -> dict:
                              "title": (soup.title.string.strip() if soup.title and soup.title.string else None),
                              "bytes": len(body)}
         result["headers"] = {h: resp.headers[h][:200] for h in INTERESTING_HEADERS if h in resp.headers}
-        result["detections"] = signatures.match(dict(resp.headers), cookie_names, assets, body, gen)
-        result["network"] = {**_dns_info(host), **_tls_info(host)}
+        net = {**_dns_info(host), **_tls_info(host)}
+        result["network"] = net
+        # resolved hostnames (reverse-DNS, TLS subject/SANs, the target itself) let signatures
+        # fingerprint the host/builder behind the site (Lovable *.l5e.io, Cloudflare Pages *.pages.dev, …)
+        host_signals = [host, net.get("reverse"), net.get("tls_subject")] + list(net.get("tls_sans") or [])
+        host_signals = [h for h in host_signals if h]
+        result["detections"] = signatures.match(dict(resp.headers), cookie_names, assets, body, gen, host_signals)
         result["endpoints"] = _extract_endpoints(body)
         result["third_party_hosts"] = sorted({host_of(a) for a in assets if host_of(a) and host_of(a) != host})[:25]
 

@@ -20,6 +20,7 @@ class Sig:
     scripts: list[str] = field(default_factory=list)               # regex over script/link src
     html: list[str] = field(default_factory=list)                  # regex over body
     generator: list[str] = field(default_factory=list)             # regex over <meta generator>
+    hosts: list[str] = field(default_factory=list)                 # regex over resolved hostnames (PTR/CNAME/TLS SAN)
     implies: list[str] = field(default_factory=list)               # names implied by this hit
 
 
@@ -49,10 +50,20 @@ SIGNATURES: list[Sig] = [
     Sig("Webflow", "site-builder", scripts=[r"webflow"], generator=[r"Webflow"], html=[r"data-wf-page"]),
     Sig("Framer", "site-builder", scripts=[r"framerusercontent\.com", r"framer"], html=[r"__framer"]),
     Sig("Ghost", "cms", generator=[r"Ghost"], scripts=[r"/ghost/"]),
+    # --- AI app builders / low-code PaaS (injected script and/or the hosting hostname give them away) ---
+    Sig("Lovable", "app-builder",
+        scripts=[r"cdn\.gpteng\.co", r"gptengineer\.js"],
+        hosts=[r"(^|\.)l5e\.io$", r"lovable(project)?\.(app|dev|com)", r"lovable-app"],
+        html=[r"Lovable Generated Project", r"lovable\.dev"],
+        implies=["Vite", "React", "Tailwind CSS"]),
+    Sig("Bolt.new (StackBlitz)", "app-builder", hosts=[r"bolt\.new", r"\.stackblitz\.io$", r"webcontainer"], scripts=[r"stackblitz"]),
+    Sig("Replit", "app-builder", hosts=[r"\.repl\.co$", r"\.replit\.(dev|app)$"], headers=[("server", "replit")]),
     # --- CDN / edge / hosting ---
+    # Cloudflare Pages (hosting) only fires on a real Pages signal; generic Cloudflare below is just the CDN/proxy.
+    Sig("Cloudflare Pages", "hosting", hosts=[r"\.pages\.dev$"], headers=[("x-powered-by", "cloudflare-pages")], html=[r"__CF_PAGES"]),
     Sig("Cloudflare", "cdn", headers=[("server", "cloudflare"), ("cf-ray", ""), ("cf-cache-status", "")]),
-    Sig("Vercel", "hosting", headers=[("server", "vercel"), ("x-vercel-id", "")]),
-    Sig("Netlify", "hosting", headers=[("server", "netlify"), ("x-nf-request-id", "")]),
+    Sig("Vercel", "hosting", headers=[("server", "vercel"), ("x-vercel-id", "")], hosts=[r"\.vercel\.app$"]),
+    Sig("Netlify", "hosting", headers=[("server", "netlify"), ("x-nf-request-id", "")], hosts=[r"\.netlify\.app$"]),
     Sig("AWS CloudFront", "cdn", headers=[("x-amz-cf-id", ""), ("via", "cloudfront")]),
     Sig("Fastly", "cdn", headers=[("x-served-by", "cache"), ("x-fastly-request-id", "")]),
     Sig("AWS S3", "hosting", headers=[("server", "AmazonS3"), ("x-amz-request-id", "")]),
@@ -106,10 +117,16 @@ def _search_headers(headers: dict, name: str, pattern: str) -> str | None:
 
 
 def match(headers: dict, cookies: list[str], scripts: list[str], body: str,
-          generator: str | None) -> list[dict]:
-    """Run every signature; return detections with evidence + implied technologies."""
+          generator: str | None, hosts: list[str] | None = None) -> list[dict]:
+    """Run every signature; return detections with evidence + implied technologies.
+
+    `hosts` = resolved hostnames (reverse-DNS PTR, TLS subject/SANs, the target host) so we can
+    fingerprint the HOST/builder behind a site (e.g. Lovable via *.l5e.io, Cloudflare Pages via
+    *.pages.dev) — a browser-observable signal a header alone can't disambiguate.
+    """
     headers_lc = {k.lower(): v for k, v in headers.items()}
     body_l = body or ""
+    host_list = [h for h in (hosts or []) if h]
     detected: dict[str, dict] = {}
 
     def add(name: str, category: str, evidence: str, confidence: str = "medium"):
@@ -122,6 +139,14 @@ def match(headers: dict, cookies: list[str], scripts: list[str], body: str,
             ev = _search_headers(headers_lc, hn, hp)
             if ev:
                 break
+        if not ev and sig.hosts and host_list:
+            for hp in sig.hosts:
+                for h in host_list:
+                    if re.search(hp, h, re.I):
+                        ev = f"hostname `{h[:80]}`"
+                        break
+                if ev:
+                    break
         if not ev:
             for cname in sig.cookies:
                 if any(cname.lower() in c.lower() for c in cookies):
@@ -146,8 +171,9 @@ def match(headers: dict, cookies: list[str], scripts: list[str], body: str,
                     ev = f"markup pattern `{hp}`"
                     break
         if ev:
-            # header/cookie/generator hits are strong; html-pattern hits are weaker
-            conf = "high" if (sig.headers or sig.cookies or sig.generator) and "markup pattern" not in ev else "medium"
+            # header/cookie/generator/hostname hits are strong; html-pattern hits are weaker
+            conf = "high" if (ev.startswith("header ") or ev.startswith("cookie ")
+                              or ev.startswith("meta generator ") or ev.startswith("hostname ")) else "medium"
             add(sig.name, sig.category, ev, conf)
             for imp in sig.implies:
                 add(imp, "implied", f"implied by {sig.name}", "low")
