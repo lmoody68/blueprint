@@ -2,3 +2,9 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 httpx>=0.27
 beautifulsoup4>=4.12
+
+# Runtime Health Audit module (blueprint/audit.py) — LOCAL/high-RAM hosts only.
+# Needs a browser: after install, run `playwright install chromium`.
+# NOT installed on the RAM-constrained prod LXC; the audit endpoint degrades
+# gracefully (returns "runtime audit unavailable") when Playwright/Chromium is absent.
+playwright>=1.48

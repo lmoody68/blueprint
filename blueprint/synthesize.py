@@ -36,7 +36,7 @@ Return ONLY a JSON object with EXACTLY these keys:
   "architecture": {
     "description": "how the pieces fit together",
     "components": [{"name": "", "role": ""}],
-    "mermaid": "a valid mermaid 'flowchart TD' diagram string of the inferred architecture"
+    "mermaid": "a valid mermaid 'flowchart TD' diagram of the inferred architecture. CRITICAL: wrap EVERY node label in double quotes, e.g. A[\"PostgreSQL (Supabase)\"] --> B[\"Vercel API\"]. Any label with parentheses, slashes, or punctuation MUST be quoted or the diagram breaks."
   },
   "build_playbook": [{"step": "short title", "detail": "what to do and why", "stack": ["tools"]}],
   "improvements": [{"title": "", "rationale": "", "impact": "high|medium|low", "effort": "high|medium|low"}],
@@ -56,6 +56,7 @@ Return ONLY a JSON object with EXACTLY these keys:
 More guidance:
 - comparables: 2-3 real competing/alternative products (name them), so the builder sees the landscape. If unsure of traction, say so in note.
 - clone_studio: make it genuinely buildable — a real file tree, real setup commands (npm/pip/etc.), real env vars. This is a from-scratch clone brief, NOT the target's private code.
+- infra/hosting labels: a CDN/proxy (Cloudflare seen only via `server: cloudflare`/`cf-ray`, Fastly, CloudFront) is the EDGE in front of the app, NOT where it is hosted. Do NOT call it "Cloudflare Pages" or a host unless a `*.pages.dev` hostname or a Pages-specific header is actually in evidence. When a host or app-builder is detected (e.g. Lovable via a `*.l5e.io`/lovable hostname, Vercel, Netlify, Replit), name THAT as the host/platform and describe Cloudflare/Fastly/etc. as the CDN in front. Keep CDN and host as separate, correctly-labeled entries.
 
 Scoring guidance:
 - composite_score (0-100): your overall read = how well-understood the build is AND how clonable it looks. High only when the stack is clear and the app is realistically rebuildable.
@@ -162,6 +163,99 @@ async def generate_app(report: dict, evidence: dict, keep_name: str | None = Non
     return proj
 
 
+REBUILD_SYSTEM = """You are BLUEPRINT's Rebuild Kit generator. From the product teardown, produce TWO
+artifacts a builder pastes into an AI coding agent (Claude / ChatGPT / Cursor) to rebuild a COMPARABLE app
+the smart, spec-driven way:
+  1) a PRODUCT REQUIREMENTS DOCUMENT (PRD) in clean Markdown, and
+  2) a ready-to-paste REBUILD PROMPT that tells the agent to build the app FROM that PRD.
+
+Clean-room ONLY: a fresh, comparable product inferred from PUBLIC signals — NEVER copy the target's code,
+assets, copy, or branding. Ground features and stack in the teardown; don't invent proprietary internals.
+
+Return ONLY this JSON:
+{
+  "name": "a working kebab-case name for the rebuild (NOT the target's brand)",
+  "prd": "a COMPLETE PRD in Markdown with these sections, in order: a '# <Name> - PRD' title, then '## Overview', '## Target users', '## Goals & success metrics', '## Core features (MVP)' (numbered, each with a one-line acceptance criterion), '## Later (nice-to-have)', '## Recommended tech stack', '## Architecture (brief)', '## Data model (key entities)', '## Milestones', '## Out of scope & clean-room notes'. Keep it concrete and grounded in the teardown.",
+  "prompt": "a single copy-paste prompt (<=250 words) instructing an AI coding agent to build this app SPEC-DRIVEN from the PRD: FIRST restate its understanding and ask any clarifying questions, THEN scaffold the recommended stack, implement the FIRST feature end-to-end, THEN proceed milestone by milestone. Say it must be clean-room (no proprietary copying) and keep every step runnable."
+}
+Output valid JSON only, no prose outside the object."""
+
+
+async def rebuild_kit(report: dict, evidence: dict, goal: str = "clone") -> dict:
+    """Produce a spec-driven Rebuild Kit — a PRD + a copy-paste rebuild prompt — from a teardown.
+    The 'PRD first, then prompt' workflow builds the right thing and wastes fewer tokens."""
+    directive = GOAL_DIRECTIVES.get(goal, GOAL_DIRECTIVES["clone"])
+    ctx = {
+        "target": evidence.get("target"), "host": evidence.get("host"),
+        "summary": report.get("summary"),
+        "business_model": report.get("business_model"),
+        "inferred_stack": report.get("inferred_stack"),
+        "architecture": (report.get("architecture") or {}).get("description"),
+        "mvp_clone_spec": report.get("mvp_clone_spec"),
+        "clone_studio": report.get("clone_studio"),
+        "improvements": (report.get("improvements") or [])[:4],
+        "comparables": report.get("comparables"),
+    }
+    user = "PRODUCT TEARDOWN:\n" + json.dumps(ctx, ensure_ascii=False)[:8000]
+    reply = await llm.chat([{"role": "system", "content": REBUILD_SYSTEM + "\n\n" + directive},
+                            {"role": "user", "content": user}],
+                           temperature=0.3, max_tokens=4500, json_mode=True)
+    try:
+        kit = llm.extract_json(reply)
+    except ValueError:
+        return {"error": "rebuild kit returned unparseable output", "raw": reply[:1200]}
+    return {"name": str(kit.get("name") or "rebuild")[:80], "prd": str(kit.get("prd") or ""),
+            "prompt": str(kit.get("prompt") or ""), "_goal": goal}
+
+
+VOC_SYSTEM = """You are BLUEPRINT's Voice-of-Customer analyst. You are given REAL, PUBLIC app-store reviews of
+a product (weighted toward the critical ones). Mine them for what users actually complain about and wish for,
+and turn each into a concrete way a rebuild could BEAT the original.
+
+HARD rules (BLUEPRINT's grounding ethos):
+- Use ONLY what the reviews actually say. Quote a real snippet for each complaint. NEVER invent a complaint,
+  a quote, a number, or a feature nobody mentioned. If the reviews are thin, say so and return fewer items.
+- Report how many reviews raise each theme honestly (exact when small, else "several"/"many").
+- A "differentiator" is a specific, buildable improvement that directly answers the complaint.
+
+Return STRICT JSON:
+{
+  "overall_sentiment": "one line - the gist of how users feel",
+  "summary": "2-3 sentences on the biggest opportunities a rebuild should target",
+  "top_complaints": [
+    {"theme": "short label", "frequency": "count or qualitative", "severity": 1,
+     "example_quote": "a real snippet from the reviews", "differentiator": "how YOUR rebuild beats this"}
+  ],
+  "loved": ["things users praise that a rebuild must KEEP (grounded in reviews)"]
+}
+Order top_complaints by severity x frequency, most actionable first. 4-8 complaints is ideal."""
+
+
+async def voice_of_customer(reviews_payload: dict) -> dict:
+    """Mine PUBLIC app-store reviews into ranked complaints + 'beat-it-here' differentiators, grounded ONLY
+    in the supplied reviews (BLUEPRINT red lines: public signals, no fabrication, quote what's really there)."""
+    revs = reviews_payload.get("reviews") or []
+    if not revs:
+        return {"error": "no reviews found to analyze", "note": reviews_payload.get("note", "")}
+    low = [r for r in revs if (r.get("rating") or 5) <= 2]        # critical reviews = the complaint gold
+    rest = [r for r in revs if (r.get("rating") or 5) > 2]
+    picked = (low + rest)[:60]
+    compact = [{"stars": r.get("rating"), "t": (r.get("title") or ""),
+                "b": (r.get("text") or "")[:400], "src": r.get("source")} for r in picked]
+    meta = {"query": reviews_payload.get("query"), "counts": reviews_payload.get("counts"),
+            "sources": reviews_payload.get("sources")}
+    user = ("PRODUCT: " + json.dumps(meta, ensure_ascii=False)
+            + "\n\nPUBLIC REVIEWS (stars, title, body):\n" + json.dumps(compact, ensure_ascii=False)[:9000])
+    reply = await llm.chat([{"role": "system", "content": VOC_SYSTEM}, {"role": "user", "content": user}],
+                           temperature=0.2, max_tokens=2600, json_mode=True)
+    try:
+        voc = llm.extract_json(reply)
+    except ValueError:
+        return {"error": "voice-of-customer returned unparseable output", "raw": reply[:1200]}
+    voc["_meta"] = meta
+    return voc
+
+
 def evidence_score(ev: dict) -> dict:
     """Deterministic 0-100 score of how much HARD public evidence we actually gathered — computed from
     the signals, never guessed by the LLM. This is BLUEPRINT's honesty gauge: a confident-looking
@@ -193,6 +287,68 @@ def evidence_score(ev: dict) -> dict:
     if (ev.get("active_graphql") or {}).get("introspection") == "OPEN":
         pts += 10; basis.append("open GraphQL introspection (+10)")
     return {"score": min(100, pts), "basis": basis}
+
+
+AUDIT_SYSTEM = """You are BLUEPRINT's Runtime Health analyst. You are given MEASURED findings from a REAL
+headless-browser audit of a live web app (console errors, failed network requests, axe-core accessibility
+violations, performance timing, mobile tap targets, and a walk through the app's own views). These are
+FACTS captured at runtime — not guesses.
+
+Your job: turn the measurements into a crisp, prioritized fix plan a developer can act on TODAY.
+
+HARD rules (BLUEPRINT's grounding ethos):
+- Use ONLY the measured findings provided. NEVER invent an error, a metric, a number, or a success target
+  that isn't in the data. If a finding has no evidence, don't list it.
+- Every recommendation must tie to a specific measured finding. Reference the real numbers/URLs.
+- Be a senior engineer: name the LIKELY root cause and the concrete fix, not generic advice. (e.g. repeated
+  failed calls to one API host = a dead/misconfigured backend, not "9 separate bugs".)
+- Honest severity. Don't inflate. If the app is healthy, say so.
+
+Return STRICT JSON:
+{
+  "summary": "2-3 sentences: the real health of this app and the single most important thing to fix",
+  "verdict": "healthy | minor-issues | needs-work | broken",
+  "root_causes": ["where several findings share ONE underlying cause, name it once"],
+  "prioritized_fixes": [
+    {"title": "", "severity": "high|medium|low", "category": "",
+     "problem": "the measured problem, with the real evidence", "likely_cause": "",
+     "fix": "the concrete change to make", "effort": "S|M|L"}
+  ],
+  "roadmap": {
+    "quick_wins": ["<1 day fixes, tied to findings"],
+    "larger": ["bigger changes"],
+    "strategic": ["optional longer-term"]
+  },
+  "what_we_measured": ["one line per category actually checked, so the reader trusts the scope"]
+}
+Order prioritized_fixes by severity then impact. Output valid JSON only, no prose outside the object."""
+
+
+async def audit_report(audit_data: dict) -> dict:
+    """Turn MEASURED runtime-audit findings into a grounded, prioritized fix plan (the honesty edge over
+    tools that invent metrics — every line here traces to a real browser measurement)."""
+    findings = audit_data.get("findings") or []
+    if not findings:
+        return {"summary": "No runtime issues were measured — the app loaded cleanly with no console errors, "
+                           "failed requests, serious accessibility violations, or broken views.",
+                "verdict": "healthy", "root_causes": [], "prioritized_fixes": [], "roadmap": {},
+                "what_we_measured": ["console errors", "network requests", "accessibility (axe-core)",
+                                     "performance timing", "mobile tap targets", "in-app view walk"]}
+    ctx = {
+        "target": audit_data.get("target"),
+        "health_score": (audit_data.get("health") or {}).get("score"),
+        "findings": findings,
+        "views_walked": [v for v in (audit_data.get("views") or []) if not v.get("ok")][:10],
+        "views_total": len(audit_data.get("views") or []),
+    }
+    user = "MEASURED RUNTIME AUDIT:\n" + json.dumps(ctx, ensure_ascii=False)[:9000]
+    reply = await llm.chat([{"role": "system", "content": AUDIT_SYSTEM}, {"role": "user", "content": user}],
+                           temperature=0.2, max_tokens=3000, json_mode=True)
+    try:
+        rep = llm.extract_json(reply)
+    except ValueError:
+        return {"error": "audit synthesis returned unparseable output", "raw": reply[:1200]}
+    return rep
 
 
 def _trim(evidence: dict) -> dict:

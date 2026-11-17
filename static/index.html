@@ -112,6 +112,13 @@
   .imp .t{font-weight:700} .badge{font-size:11px;padding:2px 8px;border-radius:6px;margin-left:6px;font-family:var(--mono)}
   .b-high{background:rgba(52,211,153,.18);color:var(--good)} .b-medium{background:rgba(251,191,36,.16);color:var(--warn)}
   .b-low{background:rgba(148,163,184,.14);color:var(--dim)}
+  .audit-btn{background:linear-gradient(90deg,#0ea5e9,#8b5cf6);border:none}
+  .sevpill{font-size:11px;padding:2px 8px;border-radius:6px;font-weight:700;font-family:var(--mono);margin-right:6px}
+  .sev-high{background:rgba(255,92,92,.18);color:#ff7a7a} .sev-medium{background:rgba(251,191,36,.16);color:var(--warn)} .sev-low{background:rgba(148,163,184,.14);color:var(--dim)}
+  .findcard{background:#0b1526;border:1px solid var(--line);border-radius:10px;padding:13px;margin-bottom:10px}
+  .findcard .ev{font-family:var(--mono);font-size:11.5px;color:var(--dim);margin-top:6px;white-space:pre-wrap;line-height:1.5}
+  .viewrow{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .vok{color:var(--good)} .vbad{color:var(--bad)}
   ul{margin:6px 0;padding-left:20px} li{margin:5px 0;line-height:1.5}
   pre{background:#060b18;border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;font-size:12px;color:var(--dim)}
   .mermaid{background:#060b18;border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center}
@@ -131,6 +138,7 @@
       <input id="target" type="text" placeholder="example.com  ·  https://app.example.com  ·  app-store link" autofocus>
       <label class="toggle"><input type="checkbox" id="active"> Deep recon</label>
       <button id="go">Analyze</button>
+      <button id="audit" class="audit-btn" title="Load the LIVE app in a real browser and measure runtime health">🩺 Health Audit</button>
     </div>
     <div class="redline">
       <b>Public signals only.</b> BLUEPRINT infers architecture from observable evidence (fingerprints, headers,
@@ -179,6 +187,115 @@ async function run(){
 function renderError(msg){
   $('#out').classList.add('on'); $('#tabs').innerHTML=''; $('#panes').innerHTML='<div class="err">⚠ '+esc(msg)+'</div>';
 }
+
+// ── 🩺 Runtime Health Audit (the headless-browser layer) ─────────────────────────────
+const AUDIT_STATUS=["Launching headless browser…","Loading the live app…","Capturing console & network…","Running axe-core accessibility…","Walking in-app views…","Measuring performance…","Writing the fix roadmap…"];
+let LAST_AUDIT=null;
+$('#audit').addEventListener('click', runAudit);
+function startAuditStatus(){ let i=0; $('#status').classList.add('on'); $('#statusText').textContent=AUDIT_STATUS[0];
+  statusTimer=setInterval(()=>{ i=(i+1)%AUDIT_STATUS.length; $('#statusText').textContent=AUDIT_STATUS[i]; },2000); }
+
+async function runAudit(){
+  const target=$('#target').value.trim(); if(!target) return;
+  $('#audit').disabled=true; $('#go').disabled=true; $('#out').classList.remove('on'); startAuditStatus();
+  try{
+    const r=await fetch('/api/audit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target})});
+    const data=await r.json();
+    if(!r.ok){ renderError(data.error||'Audit failed'); return; }
+    if(data.audit && data.audit.error){ renderError(data.audit.error); return; }
+    LAST_AUDIT=data; renderAudit(data);
+  }catch(e){ renderError(e.message); }
+  finally{ $('#audit').disabled=false; $('#go').disabled=false; stopStatus(); }
+}
+
+function sevPill(s){ s=(s||'low').toLowerCase(); return '<span class="sevpill sev-'+esc(s)+'">'+esc(s)+'</span>'; }
+
+function renderAudit(data){
+  const a=data.audit||{}, rep=data.report||{};
+  const panes=[
+    ['🩺 Health', auditHealthPane(a, rep)],
+    ['📋 Fix Roadmap', auditRoadmapPane(rep)],
+    ['🧭 View Walk', auditWalkPane(a)],
+    ['📊 Measured Data', auditDataPane(a)],
+  ];
+  const xbar='<span class="tabspace"></span><button class="xbtn" onclick="auditExportJSON()">⬇ JSON</button>';
+  $('#tabs').innerHTML=panes.map((p,i)=>`<button class="tab ${i===0?'active':''}" data-i="${i}">${esc(p[0])}</button>`).join('')+xbar;
+  $('#panes').innerHTML=panes.map((p,i)=>`<div class="pane ${i===0?'active':''}" data-i="${i}">${p[1]}</div>`).join('');
+  $('#out').classList.add('on');
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.pane').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active'); document.querySelector('.pane[data-i="'+t.dataset.i+'"]').classList.add('active');
+  });
+}
+
+function auditHealthPane(a, rep){
+  const h=a.health||{}, score=(typeof h.score==='number')?h.score:'?';
+  let html='<p class="muted" style="margin-bottom:12px">Every finding below is <b>measured</b> in a real headless browser — console/network capture, axe-core accessibility, navigation timing, and a walk through the app\'s own views. No invented metrics.</p>';
+  html+='<div class="scores">'+scoreCard('Health', score, (h.basis||[]).join(' · ')||'no issues measured')+'</div>';
+  if(rep && rep.summary) html+='<div class="imp" style="border-left:3px solid var(--accent)"><b>'+esc(rep.verdict||'')+'</b> — '+esc(rep.summary)+'</div>';
+  if(rep && (rep.root_causes||[]).length){ html+='<h3 style="margin-top:12px">Likely root cause(s)</h3><ul>'+rep.root_causes.map(c=>'<li>'+esc(c)+'</li>').join('')+'</ul>'; }
+  const f=a.findings||[];
+  html+='<h3 style="margin-top:14px">Measured findings ('+f.length+')</h3>';
+  if(!f.length) html+='<p class="muted">Clean — no runtime issues measured. 🎉</p>';
+  f.forEach(x=>{
+    html+='<div class="findcard"><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+sevPill(x.severity)
+      +'<b>'+esc(x.title)+'</b> <span class="muted" style="font-size:11px">'+esc(x.category)+'</span></div>'
+      +'<div class="muted" style="font-size:12.5px;margin-top:4px">'+esc(x.detail)+'</div>';
+    if((x.evidence||[]).length) html+='<div class="ev">'+x.evidence.map(esc).join('\n')+'</div>';
+    html+='</div>';
+  });
+  return html;
+}
+
+function auditRoadmapPane(rep){
+  if(!rep || (!rep.prioritized_fixes && !rep.roadmap)) return '<p class="muted">No roadmap — the app measured clean, or the daily LLM cap was reached (the measured findings are still complete).</p>';
+  let h='';
+  (rep.prioritized_fixes||[]).forEach(x=>{
+    h+='<div class="findcard"><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+sevPill(x.severity)
+      +'<b>'+esc(x.title)+'</b> <span class="badge b-'+(x.effort==='L'?'high':x.effort==='M'?'medium':'low')+'">effort '+esc(x.effort||'?')+'</span></div>';
+    if(x.problem) h+='<div style="margin-top:5px"><b>Problem:</b> '+esc(x.problem)+'</div>';
+    if(x.likely_cause) h+='<div class="muted" style="font-size:12.5px;margin-top:3px"><b>Likely cause:</b> '+esc(x.likely_cause)+'</div>';
+    if(x.fix) h+='<div style="margin-top:3px">🔧 <b>Fix:</b> '+esc(x.fix)+'</div>';
+    h+='</div>';
+  });
+  const rm=rep.roadmap||{};
+  const grp=(title,arr)=> (arr&&arr.length)?('<h3 style="margin-top:14px">'+title+'</h3><ul>'+arr.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>'):'';
+  h+=grp('⚡ Quick wins (&lt;1 day)', rm.quick_wins)+grp('🛠 Larger changes', rm.larger)+grp('🎯 Strategic', rm.strategic);
+  if((rep.what_we_measured||[]).length) h+='<h3 style="margin-top:14px">What we measured</h3><div>'+rep.what_we_measured.map(m=>'<span class="chip">'+esc(m)+'</span>').join('')+'</div>';
+  return h;
+}
+
+function auditWalkPane(a){
+  const v=a.views||[];
+  if(!v.length) return '<p class="muted">No in-app views were discovered to walk (not a multi-view SPA, or nav uses a pattern we didn\'t detect).</p>';
+  const bad=v.filter(x=>!x.ok).length;
+  let h='<p class="muted" style="margin-bottom:10px">Clicked through <b>'+v.length+'</b> of '+(a.views_discovered||v.length)+' discovered in-app views'+(bad?(', <b class="vbad">'+bad+' threw runtime errors</b>'):' — <b class="vok">all clean</b>')+'. <i>This is the per-view breakage a single-page audit never sees.</i></p>';
+  v.forEach(x=>{
+    h+='<div class="viewrow"><span class="'+(x.ok?'vok':'vbad')+'">'+(x.ok?'✓':'✗')+'</span><b>'+esc(x.view)+'</b>';
+    if(!x.ok){ const det=(x.errors||[]).concat(x.failed||[]).slice(0,2).join(' · '); h+='<span class="muted" style="font-size:11.5px">'+esc(det)+'</span>'; }
+    h+='</div>';
+  });
+  return h;
+}
+
+function auditDataPane(a){
+  let h='<p class="muted" style="margin-bottom:10px">Raw measurements per page (desktop + mobile).</p>';
+  (a.pages||[]).forEach(p=>{
+    const m=p.measure||{}, perf=m.perf||{};
+    h+='<div class="findcard"><b>'+esc(p.label)+'</b> <span class="muted" style="font-size:11px">'+esc(p.url||'')+'</span>';
+    h+='<div class="ev">';
+    h+='title: '+esc(m.title||'(none)')+'\n';
+    if(perf.loadComplete!=null) h+='perf: load '+perf.loadComplete+'ms · FCP '+(perf.fcp||'?')+'ms · TTFB '+perf.ttfb+'ms · '+(perf.transferKB||'?')+'KB / '+(perf.requests||'?')+' reqs\n';
+    h+='console errors: '+(p.console_errors||[]).length+' · page errors: '+(p.page_errors||[]).length+' · failed requests: '+(p.failed_requests||[]).length+'\n';
+    h+='axe violations: '+(p.axe||[]).length+(p.mobile?(' · small tap targets: '+(p.tap_small||[]).length):'')+'\n';
+    if((p.failed_requests||[]).length) h+='  failed: '+p.failed_requests.slice(0,4).map(f=>(f.status||f.err||'')+' '+f.url).join('; ')+'\n';
+    h+='</div></div>';
+  });
+  return h;
+}
+
+function auditExportJSON(){ if(LAST_AUDIT) dl((($('#target').value.trim().replace(/[^a-z0-9]+/gi,'-'))||'audit')+'.health-audit.json', JSON.stringify(LAST_AUDIT,null,2), 'application/json'); }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 // Repair LLM-generated mermaid: quote node labels that contain parens/specials, which otherwise crash the parser
 // (e.g. B[PostgreSQL (Supabase)] -> B["PostgreSQL (Supabase)"]). Handles [..] and {..} node shapes.
@@ -207,6 +324,7 @@ function render(data){
     panes.push(['Clone Studio', cloneStudio(rep)]);
     panes.push(['Ask BLUEPRINT', chatPane()]);
   }
+  panes.push(['🗣️ Voice of Customer', vocPane(ev)]);
   panes.push(['Evidence', evidence(ev)]);
 
   const xbar = rep ? `<span class="tabspace"></span><button class="xbtn" onclick="openReport()">📄 Report</button><button class="xbtn" onclick="exportMD()">⬇ MD</button><button class="xbtn" onclick="exportJSON()">⬇ JSON</button>` : '';
@@ -245,10 +363,54 @@ function cloneStudio(rep){
   +'</div>';
   h+='<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
     +'<button class="bigbtn" onclick="generateApp()">🚀 Build it with AI</button>'
+    +'<button class="bigbtn" onclick="rebuildKit()">📋 Rebuild Kit (PRD + prompt)</button>'
     +'<button class="xbtn" onclick="downloadBrief()">⬇ Build brief (.md)</button>'
-    +'<button class="xbtn" onclick="copyBuildPrompt()">🛠 Copy build prompt → Emergent / Lovable / Bolt</button></div>'
-    +'<p class="muted" style="font-size:11.5px;margin-top:6px">Generates a real, runnable starter project (.zip). Pick <b>Improve / Fix / Redesign</b> and enter a name to rebuild a friend’s app <b>keeping their name & identity</b>; leave the name blank for a fresh clone.</p>';
+    +'<button class="xbtn" onclick="copyBuildPrompt()">🛠 Quick prompt → Emergent / Lovable / Bolt</button></div>'
+    +'<p class="muted" style="font-size:11.5px;margin-top:6px"><b>Build it with AI</b> = a real runnable starter project (.zip). <b>Rebuild Kit</b> = a <b>PRD + spec-driven prompt</b> to paste into Claude/ChatGPT and build it right (fewer wasted tokens). Pick <b>Improve / Fix / Redesign</b> + a name to rebuild a friend’s app keeping their identity; blank = fresh clone. All <b>clean-room</b> — no code/assets copied.</p>';
+  h+='<div id="kitOut" class="buildout"></div>';
   h+='<div id="buildOut" class="buildout"></div>';
+  return h;
+}
+function vocPane(ev){
+  const q=esc(((ev&&ev.target)||'')).replace(/"/g,'&quot;');
+  return '<p class="muted" style="margin-bottom:10px">Mine a product\'s <b>public reviews from ANY source</b> — Apple App Store, Google Play, <b>and the web</b> (G2, Trustpilot, Reddit, Capterra…) — for what users actually complain about, then turn each into a <b>“beat-it-here”</b> differentiator for your rebuild. Public signals only, grounded in real quotes.</p>'
+    +'<div class="buildopts">'
+    +'<input id="vocQuery" type="text" placeholder="App/product name, or App Store / Play Store link" value="'+q+'" style="flex:1;min-width:220px" />'
+    +'<label class="bopt">Country <select id="vocCountry"><option value="us">US</option><option value="gb">UK</option><option value="ca">CA</option><option value="au">AU</option></select></label>'
+    +'<button class="bigbtn" onclick="mineReviews()">🗣️ Mine reviews</button>'
+    +'</div>'
+    +'<div id="vocOut" class="buildout"></div>';
+}
+async function mineReviews(){
+  const qEl=document.getElementById('vocQuery'); const q=(qEl&&qEl.value||'').trim();
+  const out=document.getElementById('vocOut');
+  if(!q){ out.innerHTML='<p class="muted">Enter an app/product name or a store link.</p>'; return; }
+  const country=(document.getElementById('vocCountry')||{}).value||'us';
+  out.innerHTML='<div class="building"><span class="spin"></span> Pulling public reviews across app stores + the web and mining complaints (~15-30s)…</div>';
+  try{
+    const r=await fetch('/api/reviews',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q,country:country})});
+    out.innerHTML=renderVOC(await r.json());
+  }catch(e){ out.innerHTML='<p class="muted">Error: '+esc(String(e))+'</p>'; }
+}
+function sevBadge(n){ n=+n||0; const c=n>=5?'#ff5c5c':n>=4?'#ff9f43':n>=3?'#ffd93b':'#7bd389'; return '<span style="background:'+c+';color:#0a0f1e;border-radius:4px;padding:1px 7px;font-weight:700;font-size:11px">sev '+n+'</span>'; }
+function renderVOC(d){
+  if(d.error) return '<p class="muted">'+esc(d.error)+'</p>';
+  const m=d.reviews_meta||{}, voc=d.voc, c=m.counts||{};
+  const src='<p class="muted" style="font-size:12px">Sources — Apple '+(c.apple||0)+' · Play '+(c.play||0)+' · Web '+(c.web||0)+' · '+(c.low_star||0)+' critical. '+esc(m.note||'')+'</p>';
+  if(!voc) return src+'<p class="muted">'+esc(d.note||'No public reviews found to mine.')+'</p>';
+  if(voc.error) return src+'<p class="muted">'+esc(voc.error)+'</p>';
+  let h=src;
+  if(voc.overall_sentiment) h+='<div class="imp" style="border-left:3px solid var(--accent)"><b>Sentiment:</b> '+esc(voc.overall_sentiment)+'</div>';
+  if(voc.summary) h+='<p style="margin:10px 0">'+esc(voc.summary)+'</p>';
+  h+='<h3>Top complaints → how to beat them</h3>';
+  (voc.top_complaints||[]).forEach(x=>{
+    h+='<div class="imp" style="margin-bottom:10px">'
+      +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;flex-wrap:wrap">'+sevBadge(x.severity)+'<b>'+esc(x.theme||'')+'</b> <span class="muted" style="font-size:11px">('+esc(x.frequency||'')+')</span></div>'
+      +'<div class="muted" style="font-style:italic;font-size:12.5px;margin-bottom:4px">“'+esc(x.example_quote||'')+'”</div>'
+      +'<div>🏆 <b>Beat it:</b> '+esc(x.differentiator||'')+'</div>'
+      +'</div>';
+  });
+  if((voc.loved||[]).length) h+='<h3 style="margin-top:12px">Keep these (users love them)</h3><ul>'+voc.loved.map(l=>'<li>'+esc(l)+'</li>').join('')+'</ul>';
   return h;
 }
 async function generateApp(){
@@ -307,6 +469,38 @@ async function copyBuildPrompt(){
   const t=buildPrompt();
   try{ await navigator.clipboard.writeText(t); alert('Build prompt copied ✓\nPaste it into Emergent, Lovable, Bolt, or Claude to build the clone.'); }
   catch(e){ dl(slug()+'.build-prompt.txt', t, 'text/plain'); }
+}
+function copyText(t, btn){
+  navigator.clipboard.writeText(t||'').then(()=>{ if(btn){const o=btn.textContent; btn.textContent='Copied ✓'; setTimeout(()=>btn.textContent=o,1500);} })
+    .catch(()=>dl('copy.txt', t||'', 'text/plain'));
+}
+async function rebuildKit(){
+  if(!LAST||!LAST.rep) return;
+  const out=document.getElementById('kitOut');
+  const goalEl=document.getElementById('buildGoal'); const goal=goalEl?goalEl.value:'clone';
+  out.innerHTML='<div class="building"><span class="spin"></span> Generating your Rebuild Kit — a PRD + a spec-driven prompt (~10-20s)…</div>';
+  try{
+    const r=await fetch('/api/rebuild_kit',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({report:LAST.rep, evidence:LAST.ev, goal})});
+    const k=await r.json();
+    if(k.error){ out.innerHTML='<div class="err">⚠ '+esc(k.error)+'</div>'; return; }
+    LAST.kit=k; renderKit(k);
+  }catch(e){ out.innerHTML='<div class="err">⚠ '+esc(e.message)+'</div>'; }
+}
+function renderKit(k){
+  const out=document.getElementById('kitOut');
+  const H='style="margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent2)"';
+  let h='<div class="projbox"><div class="projhead"><b style="font-size:15px">📋 Rebuild Kit — '+esc(k.name||'rebuild')+'</b></div>';
+  h+='<p class="muted" style="margin:8px 0 10px;line-height:1.5">Spec-driven: paste the <b>PRD</b> into your AI agent first, then the <b>rebuild prompt</b> — you build the right thing and waste fewer tokens. <b>Clean-room</b> — a fresh comparable app, no code or assets copied.</p>';
+  h+='<h4 '+H+'>PRD (the spec)</h4>'
+    +'<div style="display:flex;gap:8px;margin-bottom:6px"><button class="xbtn" onclick="copyText(LAST.kit.prd,this)">📋 Copy PRD</button>'
+    +'<button class="xbtn" onclick="dl(slug()+\'.PRD.md\', LAST.kit.prd, \'text/markdown\')">⬇ PRD (.md)</button></div>'
+    +'<pre class="tree" style="max-height:340px;overflow:auto;white-space:pre-wrap">'+esc(k.prd||'')+'</pre>';
+  h+='<h4 '+H+'>Rebuild prompt (paste after the PRD)</h4>'
+    +'<div style="display:flex;gap:8px;margin-bottom:6px"><button class="xbtn" onclick="copyText(LAST.kit.prompt,this)">📋 Copy prompt</button></div>'
+    +'<pre class="tree" style="max-height:220px;overflow:auto;white-space:pre-wrap">'+esc(k.prompt||'')+'</pre>';
+  h+='</div>';
+  out.innerHTML=h;
 }
 function chatPane(){
   const qs=['What would be hardest to clone?','How is their real-time layer likely built?','What is their biggest weakness?','Sketch a 2-week MVP plan.'];

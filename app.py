@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from blueprint import collectors, synthesize, llm, __version__
+from blueprint import collectors, synthesize, llm, reviews, audit, __version__
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(BASE, "static")
@@ -178,6 +178,103 @@ async def generate_app(req: Request):
         return JSONResponse({"error": "Daily cap reached — resets tomorrow."}, status_code=429)
     try:
         return await synthesize.generate_app(report, evidence, keep_name=keep_name, goal=goal)
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
+@app.post("/api/rebuild_kit")
+async def rebuild_kit_ep(req: Request):
+    ip = _client_ip(req)
+    if not _rate_ok(ip, "k:", int(os.getenv("BLUEPRINT_KIT_PER_MIN", "5"))):
+        return JSONResponse({"error": "Rate limit — wait a moment."}, status_code=429)
+    try:
+        body = await _body(req)
+    except ValueError:
+        return JSONResponse({"error": "Request too large."}, status_code=413)
+    report = body.get("report") or {}
+    evidence = body.get("evidence") or {}
+    if not report:
+        return JSONResponse({"error": "Run a teardown first, then build the kit."}, status_code=400)
+    goal = (body.get("goal") or "clone").strip().lower()
+    if goal not in ("clone", "improve", "fix", "redesign"):
+        goal = "clone"
+    if not _global_ok():
+        return JSONResponse({"error": "Daily cap reached — resets tomorrow."}, status_code=429)
+    try:
+        return await synthesize.rebuild_kit(report, evidence, goal=goal)
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
+@app.post("/api/reviews")
+async def reviews_ep(req: Request):
+    """🗣️ Voice of Customer — mine PUBLIC app-store reviews for complaints → 'beat-it-here' differentiators."""
+    ip = _client_ip(req)
+    if not _rate_ok(ip, "r:", int(os.getenv("BLUEPRINT_REVIEWS_PER_MIN", "6"))):
+        return JSONResponse({"error": "Rate limit — a few requests a minute, please."}, status_code=429)
+    try:
+        body = await _body(req)
+    except ValueError:
+        return JSONResponse({"error": "Request too large."}, status_code=413)
+    query = (body.get("query") or body.get("target") or "").strip()
+    if not query:
+        return JSONResponse({"error": "Provide an app name or an App Store / Play Store link."}, status_code=400)
+    if len(query) > 2048:
+        return JSONResponse({"error": "Query too long."}, status_code=400)
+    country = ((body.get("country") or "us").strip().lower()[:2]) or "us"
+    t0 = time.time()
+    try:
+        data = await reviews.collect_reviews(query, country=country)
+        meta = {k: v for k, v in data.items() if k not in ("reviews", "low_star")}  # don't ship raw reviews back
+        if not data.get("ok"):
+            return {"reviews_meta": meta, "voc": None,
+                    "note": data.get("note") or data.get("error") or "no public reviews found",
+                    "elapsed_ms": int((time.time() - t0) * 1000)}
+        if not _global_ok():
+            return {"reviews_meta": meta, "voc": None, "note": "Daily cap reached — resets tomorrow.",
+                    "elapsed_ms": int((time.time() - t0) * 1000)}
+        voc = await synthesize.voice_of_customer(data)
+        return {"reviews_meta": meta, "voc": voc, "elapsed_ms": int((time.time() - t0) * 1000)}
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
+@app.post("/api/audit")
+async def audit_ep(req: Request):
+    """🩺 Runtime Health Audit — load the live app in a real headless browser and MEASURE console errors,
+    failed requests, accessibility (axe-core), performance, mobile tap targets, and walk its in-app views.
+    This is the dimension the static teardown can't see. Everything returned is measured fact."""
+    ip = _client_ip(req)
+    if not _rate_ok(ip, "h:", int(os.getenv("BLUEPRINT_AUDIT_PER_MIN", "4"))):
+        return JSONResponse({"error": "Rate limit — the live audit is heavy; wait a moment."}, status_code=429)
+    try:
+        body = await _body(req)
+    except ValueError:
+        return JSONResponse({"error": "Request too large."}, status_code=413)
+    target = (body.get("target") or "").strip()
+    if not target:
+        return JSONResponse({"error": "Provide a target URL to audit."}, status_code=400)
+    if len(target) > 2048:
+        return JSONResponse({"error": "Target too long."}, status_code=400)
+    walk = body.get("walk", True)
+    t0 = time.time()
+    try:
+        data = await audit.run_audit(target, walk=bool(walk))
+        if data.get("error"):
+            return {"audit": data, "report": None, "note": data["error"],
+                    "elapsed_ms": int((time.time() - t0) * 1000)}
+        # LLM roadmap only if there are findings AND we have budget
+        report = None
+        if data.get("findings") and _global_ok():
+            report = await synthesize.audit_report(data)
+        elif data.get("findings"):
+            report = {"note": "Daily LLM cap reached — measured findings above are complete; roadmap skipped."}
+        else:
+            report = await synthesize.audit_report(data)  # the cheap 'healthy' path (no LLM)
+        return {"audit": data, "report": report, "elapsed_ms": int((time.time() - t0) * 1000)}
     except Exception as e:
         traceback.print_exc()
         return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
