@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from blueprint import collectors, synthesize, llm, reviews, audit, __version__
+from blueprint import collectors, synthesize, llm, reviews, audit, deepcode, __version__
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(BASE, "static")
@@ -183,6 +183,68 @@ async def generate_app(req: Request):
         return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
 
 
+@app.post("/api/fidelity_check")
+async def fidelity_check_ep(req: Request):
+    """✓ Fidelity Check (the Craft Anything 'Check' step, IP-safe) — score a generated rebuild against the
+    PUBLIC teardown spec: coverage score + what matches + what's missing + a refine prompt. Clean-room only."""
+    ip = _client_ip(req)
+    if not _rate_ok(ip, "f:", int(os.getenv("BLUEPRINT_CHECK_PER_MIN", "6"))):
+        return JSONResponse({"error": "Rate limit — wait a moment."}, status_code=429)
+    try:
+        body = await _body(req)
+    except ValueError:
+        return JSONResponse({"error": "Request too large."}, status_code=413)
+    report = body.get("report") or {}
+    evidence = body.get("evidence") or {}
+    project = body.get("project") or {}
+    if not report or not project:
+        return JSONResponse({"error": "Need both a teardown and a generated project to check."}, status_code=400)
+    audit_data = body.get("audit") or None
+    visual = body.get("visual") or None
+    if not _global_ok():
+        return JSONResponse({"error": "Daily cap reached — resets tomorrow."}, status_code=429)
+    try:
+        return await synthesize.fidelity_check(report, evidence, project, audit_data=audit_data, visual=visual)
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
+@app.post("/api/generate_checked")
+async def generate_checked_ep(req: Request):
+    """🔁 Build + Check + Refine (Craft Anything's full loop, IP-safe) — build the rebuild, check it against the
+    teardown, and refine until it passes or max_rounds. Returns the final project + its check trail."""
+    ip = _client_ip(req)
+    if not _rate_ok(ip, "bc:", int(os.getenv("BLUEPRINT_BUILDCHECK_PER_MIN", "2"))):
+        return JSONResponse({"error": "Rate limit — build+check is heavy; wait a moment."}, status_code=429)
+    try:
+        body = await _body(req)
+    except ValueError:
+        return JSONResponse({"error": "Request too large."}, status_code=413)
+    report = body.get("report") or {}
+    evidence = body.get("evidence") or {}
+    if not report:
+        return JSONResponse({"error": "Run a teardown first, then build."}, status_code=400)
+    keep_name = (body.get("keep_name") or "").strip()[:80] or None
+    goal = (body.get("goal") or "clone").strip().lower()
+    if goal not in ("clone", "improve", "fix", "redesign"):
+        goal = "clone"
+    try:
+        rounds = max(1, min(3, int(body.get("rounds") or 2)))
+    except (TypeError, ValueError):
+        rounds = 2
+    audit_data = body.get("audit") or None
+    visual = body.get("visual") or None
+    if not _global_ok():
+        return JSONResponse({"error": "Daily cap reached — resets tomorrow."}, status_code=429)
+    try:
+        return await synthesize.generate_app_checked(report, evidence, keep_name=keep_name, goal=goal,
+                                                      max_rounds=rounds, audit_data=audit_data, visual=visual)
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
 @app.post("/api/rebuild_kit")
 async def rebuild_kit_ep(req: Request):
     ip = _client_ip(req)
@@ -275,6 +337,65 @@ async def audit_ep(req: Request):
         else:
             report = await synthesize.audit_report(data)  # the cheap 'healthy' path (no LLM)
         return {"audit": data, "report": report, "elapsed_ms": int((time.time() - t0) * 1000)}
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
+@app.post("/api/deep_analyze")
+async def deep_analyze_ep(req: Request):
+    """🔬 Deep Code teardown (Craft Anything's 'inspect the actual code and files') — point at a local folder
+    or a GitHub repo; BLUEPRINT reads the REAL source and grounds the teardown in the code, not public signals.
+    Output shape matches the normal teardown, so Build-it / Fidelity Check / Rebuild Kit all work on it."""
+    ip = _client_ip(req)
+    if not _rate_ok(ip, "d:", int(os.getenv("BLUEPRINT_DEEP_PER_MIN", "3"))):
+        return JSONResponse({"error": "Rate limit — deep analysis is heavy; wait a moment."}, status_code=429)
+    try:
+        body = await _body(req)
+    except ValueError:
+        return JSONResponse({"error": "Request too large."}, status_code=413)
+    source = (body.get("source") or body.get("target") or "").strip()
+    if not source:
+        return JSONResponse({"error": "Provide a local folder path or a GitHub repo URL."}, status_code=400)
+    if len(source) > 2048:
+        return JSONResponse({"error": "Source too long."}, status_code=400)
+    t0 = time.time()
+    try:
+        code = deepcode.ingest(source)
+        if code.get("error"):
+            return {"report": None, "evidence": None, "note": code["error"],
+                    "elapsed_ms": int((time.time() - t0) * 1000)}
+        if not _global_ok():
+            return JSONResponse({"error": "Daily cap reached — resets tomorrow."}, status_code=429)
+        report = await synthesize.deep_teardown(code)
+        evidence = {"target": code.get("origin"), "host": code.get("origin"), "deep": True,
+                    "file_count": code.get("file_count"), "languages": code.get("languages"),
+                    "tree": (code.get("tree") or [])[:120]}
+        return {"report": report, "evidence": evidence, "elapsed_ms": int((time.time() - t0) * 1000)}
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
+@app.post("/api/visual_study")
+async def visual_study_ep(req: Request):
+    """👁 Visual Study (Craft Anything's 'study the pages at every width', IP-safe) — render the PUBLIC page in
+    a real browser at desktop/tablet/mobile and OBSERVE structure, palette, fonts + a thumbnail. Read-only."""
+    ip = _client_ip(req)
+    if not _rate_ok(ip, "v:", int(os.getenv("BLUEPRINT_VISUAL_PER_MIN", "4"))):
+        return JSONResponse({"error": "Rate limit — the visual study is heavy; wait a moment."}, status_code=429)
+    try:
+        body = await _body(req)
+    except ValueError:
+        return JSONResponse({"error": "Request too large."}, status_code=413)
+    target = (body.get("target") or "").strip()
+    if not target:
+        return JSONResponse({"error": "Provide a target URL to study."}, status_code=400)
+    if len(target) > 2048:
+        return JSONResponse({"error": "Target too long."}, status_code=400)
+    shots = body.get("shots", True)
+    try:
+        return await audit.visual_study(target, shots=bool(shots))
     except Exception as e:
         traceback.print_exc()
         return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)

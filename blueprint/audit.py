@@ -336,6 +336,82 @@ async def run_audit(target: str, walk: bool = True) -> dict:
     return result
 
 
+# ── VISUAL STUDY (Craft Anything's "study the pages at every width", made IP-safe) ────────────────
+# Loads the PUBLIC page in a real browser at three widths and OBSERVES the rendered result: structure,
+# palette, fonts, element counts, and a thumbnail. This is the dimension the static teardown can't see —
+# BLUEPRINT now SEES the page like CA does, instead of only inferring from shipped HTML. Read-only.
+VISUAL_WIDTHS = [("desktop", 1366, 900), ("tablet", 834, 1112), ("mobile", 390, 844)]
+
+_VISUAL_JS = r"""() => {
+  const vis = el => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el);
+    return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const txt = el => (el.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 70);
+  const q = sel => [...document.querySelectorAll(sel)].filter(vis);
+  const headings = q('h1,h2').slice(0, 8).map(h => ({ tag: h.tagName, text: txt(h) }));
+  const b = getComputedStyle(document.body);
+  const accents = {};
+  q('a,button,[role=button],[class*=btn]').slice(0, 60).forEach(e => {
+    const c = getComputedStyle(e).backgroundColor;
+    if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') accents[c] = (accents[c] || 0) + 1; });
+  const accent = Object.entries(accents).sort((a, c) => c[1] - a[1]).slice(0, 3).map(x => x[0]);
+  return { title: document.title,
+    layout: { headings, navs: q('nav').length, sections: q('section,main>div,[class*=section]').length,
+              buttons: q('a[class*=btn],button,[role=button]').length,
+              inputs: q('input,textarea,select').length, images: q('img').length,
+              cards: q('[class*=card]').length },
+    palette: { bg: b.backgroundColor, text: b.color, accent,
+               font: (b.fontFamily || '').split(',')[0].replace(/["']/g, '').trim() },
+    overflow: document.documentElement.scrollWidth > window.innerWidth + 2 };
+}"""
+
+
+async def visual_study(target: str, shots: bool = True) -> dict:
+    """CA's 'Study at every width', IP-safe: render the PUBLIC page at desktop/tablet/mobile and OBSERVE its
+    structure, palette, fonts and a thumbnail — grounding the teardown/check in how the app actually LOOKS,
+    not just its HTML. Read-only; SSRF-guarded; degrades gracefully where the browser isn't installed."""
+    if not _PLAYWRIGHT:
+        return {"error": "Visual study unavailable — Playwright isn't installed on this server.", "target": target}
+    url = collectors.normalize_url(target)
+    host = collectors.host_of(url)
+    ok, why = collectors.public_host_ok(host)
+    if not ok:
+        return {"error": why, "target": target}
+    import base64
+    t0 = time.time()
+    launch_kw = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+    if EXECUTABLE:
+        launch_kw["executable_path"] = EXECUTABLE
+    out = {"target": target, "url": url, "host": host, "widths": []}
+    async with async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(**launch_kw)
+        except Exception as e:
+            return {"error": "Visual study unavailable — the headless browser (Chromium) isn't installed here. "
+                             "Run it locally, or install with `playwright install chromium`.",
+                    "detail": f"{type(e).__name__}: {str(e)[:150]}", "target": target}
+        try:
+            for name, w, h in VISUAL_WIDTHS:
+                ctx = await browser.new_context(viewport={"width": w, "height": h}, bypass_csp=True,
+                                                user_agent="Mozilla/5.0 (BLUEPRINT-Study; +read-only)")
+                page = await ctx.new_page()
+                entry = {"width": name, "px": w}
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+                    await page.wait_for_timeout(min(SETTLE_MS, 3000))
+                    entry["observed"] = await page.evaluate(_VISUAL_JS)
+                    if shots:
+                        png = await page.screenshot(type="jpeg", quality=55, full_page=False)
+                        entry["thumb"] = "data:image/jpeg;base64," + base64.b64encode(png).decode()
+                except Exception as e:  # one width failing never sinks the rest
+                    entry["error"] = f"{type(e).__name__}: {str(e)[:120]}"
+                out["widths"].append(entry)
+                await ctx.close()
+        finally:
+            await browser.close()
+    out["elapsed_ms"] = int((time.time() - t0) * 1000)
+    return out
+
+
 # ── deterministic rollups (no LLM — these are measured facts) ─────────────────────────────────────
 def _derive_findings(r: dict) -> list:
     """Roll the raw measurements into deduped, severity-tagged findings — all [measured]."""

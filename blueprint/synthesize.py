@@ -125,16 +125,22 @@ GOAL_DIRECTIVES = {
 }
 
 
-async def generate_app(report: dict, evidence: dict, keep_name: str | None = None, goal: str = "clone") -> dict:
+async def generate_app(report: dict, evidence: dict, keep_name: str | None = None, goal: str = "clone",
+                       refine: str = "") -> dict:
     """AI-build: turn the teardown into a runnable starter project (files) — the 'Build it with AI' button.
 
     goal: clone | improve | fix | redesign. keep_name: the owner's existing app name to preserve (for rebuilding
-    an app a friend/classmate built, keeping their identity)."""
+    an app a friend/classmate built, keeping their identity). refine: gap-closing instructions from a prior
+    Fidelity Check — when set, this is a REFINEMENT pass that fixes the listed gaps (the Check→refine loop)."""
     directive = GOAL_DIRECTIVES.get(goal, GOAL_DIRECTIVES["clone"])
     if keep_name:
         directive += (f'\nUSE THIS EXACT app/project name (the owner already uses it): "{keep_name}". '
                       f'Keep their branding and identity — do NOT rename it.')
     system = BUILD_SYSTEM + "\n\n" + directive
+    if refine:
+        system += ("\n\nREFINEMENT PASS — your previous build was checked against the teardown and had these "
+                   "gaps. FIX them while keeping everything that already worked, and return the COMPLETE improved "
+                   "project (all files, not just the changes):\n" + refine[:2000])
     ctx = {
         "target": evidence.get("target"),
         "summary": report.get("summary"),
@@ -161,6 +167,181 @@ async def generate_app(report: dict, evidence: dict, keep_name: str | None = Non
         proj["name"] = keep_name           # preserve the owner's name no matter what the model returned
     proj["_goal"] = goal
     return proj
+
+
+# ── FIDELITY CHECK (the Craft Anything "Check" step, made IP-safe) ────────────────────────────────
+# After BLUEPRINT builds a rebuild, verify it against the PUBLIC-inferred teardown spec — NOT against any
+# proprietary internals — score the coverage, list what's missing, and emit a refine prompt. This is the
+# step BLUEPRINT lacked: it generated once and stopped. Pairs with generate_app(refine=...) to close the loop.
+CHECK_SYSTEM = """You are BLUEPRINT's Fidelity Checker. You are given (1) a product TEARDOWN of a target app
+(inferred from PUBLIC signals) and (2) a GENERATED REBUILD project a builder produced from that teardown. Judge
+how faithfully the rebuild covers what the teardown says the product should be: its core/first feature, the
+recommended stack, the architecture, and the improvements it was meant to bake in.
+
+This is a CLEAN-ROOM COVERAGE check. Compare the rebuild ONLY against the teardown spec. Do NOT require, reward,
+or request proprietary internals, copied code, assets, text, or branding — if any appear to be copied, that is a
+GAP, not a match. If MEASURED runtime findings are provided, use them as extra evidence.
+
+Return ONLY this JSON:
+{
+  "fidelity_score": 0-100,
+  "verdict": "one sentence: is this a faithful, runnable starter for the inferred product?",
+  "matched": ["specific things the rebuild got right, grounded in its files or the teardown"],
+  "gaps": [{"item":"what is missing or incomplete","why":"which teardown element it fails to cover","severity":"high|med|low"}],
+  "refine_prompt": "a concrete instruction block the builder can apply to CLOSE the gaps above — name the files to add or complete and the features to finish. Clean-room only, no proprietary copying."
+}
+Score honestly: an empty shell, placeholder TODOs, or a missing first feature is LOW; a complete, runnable
+first feature in the recommended stack with the improvements present is HIGH. Ground every gap in a real
+teardown element or a real missing/incomplete file. Output valid JSON only."""
+
+
+async def fidelity_check(report: dict, evidence: dict, project: dict, audit_data: dict | None = None,
+                         visual: dict | None = None) -> dict:
+    """CHECK step (Craft Anything's loop, IP-safe): score a generated rebuild against the teardown spec, list
+    what matches and what is missing, and produce a refine prompt. Compares to the PUBLIC-inferred spec only.
+    audit_data (optional): MEASURED runtime findings from the Playwright Health Audit, folded in when present.
+    visual (optional): the target's VISUAL STUDY (rendered layout + palette at 3 widths) — lets the check judge
+    whether the rebuild matches how the original actually LOOKS, not just its feature coverage."""
+    spec = {
+        "target": evidence.get("target"),
+        "summary": report.get("summary"),
+        "recommended_stack": (report.get("clone_studio") or {}).get("stack") or report.get("inferred_stack"),
+        "first_feature": (report.get("clone_studio") or {}).get("first_feature"),
+        "mvp_clone_spec": report.get("mvp_clone_spec"),
+        "architecture": (report.get("architecture") or {}).get("description"),
+        "improvements": (report.get("improvements") or [])[:3],
+    }
+    build = {
+        "name": project.get("name"), "summary": project.get("summary"),
+        "stack": project.get("stack"), "run": project.get("run"),
+        "files": [{"path": f.get("path"), "preview": str(f.get("content") or "")[:900]}
+                  for f in (project.get("files") or [])],
+        "next_steps": project.get("next_steps"),
+    }
+    user = ("TEARDOWN SPEC:\n" + json.dumps(spec, ensure_ascii=False)[:5000]
+            + "\n\nGENERATED REBUILD:\n" + json.dumps(build, ensure_ascii=False)[:9000])
+    if audit_data:
+        meas = {"health_score": audit_data.get("health_score"),
+                "findings": (audit_data.get("findings") or [])[:8]}
+        user += "\n\nMEASURED RUNTIME FINDINGS (real browser):\n" + json.dumps(meas, ensure_ascii=False)[:2500]
+    if visual and visual.get("widths"):
+        vobs = [{"width": w.get("width"), "layout": (w.get("observed") or {}).get("layout"),
+                 "palette": (w.get("observed") or {}).get("palette")}
+                for w in visual["widths"] if w.get("observed")]
+        if vobs:
+            user += ("\n\nTARGET VISUAL STUDY (how the ORIGINAL actually renders at 3 widths — judge whether the "
+                     "rebuild's layout, structure and palette are in the same spirit, clean-room):\n"
+                     + json.dumps(vobs, ensure_ascii=False)[:2800])
+    user += "\n\nCheck the rebuild against the spec now."
+    reply = await llm.chat([{"role": "system", "content": CHECK_SYSTEM}, {"role": "user", "content": user}],
+                           temperature=0.2, max_tokens=2000, json_mode=True)
+    try:
+        res = llm.extract_json(reply)
+    except ValueError:
+        return {"error": "fidelity check returned unparseable output", "raw": reply[:1200]}
+    try:
+        score = int(res.get("fidelity_score"))
+    except (TypeError, ValueError):
+        score = 0
+    return {
+        "fidelity_score": max(0, min(100, score)),
+        "verdict": str(res.get("verdict") or "")[:300],
+        "matched": [str(m)[:200] for m in (res.get("matched") or [])][:10],
+        "gaps": [g for g in (res.get("gaps") or []) if isinstance(g, dict)][:10],
+        "refine_prompt": str(res.get("refine_prompt") or "")[:2500],
+    }
+
+
+async def generate_app_checked(report: dict, evidence: dict, keep_name: str | None = None, goal: str = "clone",
+                               max_rounds: int = 2, pass_score: int = 80,
+                               audit_data: dict | None = None, visual: dict | None = None) -> dict:
+    """The full Study→Build→CHECK→refine loop (Craft Anything's cycle, IP-safe): build the app, check it against
+    the teardown, and refine until it passes or max_rounds. Returns the final project with its check trail."""
+    proj = await generate_app(report, evidence, keep_name, goal)
+    if proj.get("error"):
+        return proj
+    trail = []
+    for rnd in range(1, max(1, max_rounds) + 1):
+        chk = await fidelity_check(report, evidence, proj, audit_data=audit_data, visual=visual)
+        if chk.get("error"):
+            trail.append({"round": rnd, "error": chk["error"]})
+            break
+        proj["_fidelity"] = chk
+        trail.append({"round": rnd, "fidelity_score": chk["fidelity_score"],
+                      "verdict": chk["verdict"], "gaps": chk["gaps"]})
+        if chk["fidelity_score"] >= pass_score or rnd >= max(1, max_rounds):
+            break
+        gaps_txt = chk.get("refine_prompt") or "; ".join(
+            f"{g.get('item','')} ({g.get('why','')})" for g in chk.get("gaps", []))
+        if not gaps_txt.strip():
+            break
+        refined = await generate_app(report, evidence, keep_name, goal, refine=gaps_txt)
+        if refined.get("error"):
+            break
+        proj = refined
+    proj["_check_trail"] = trail
+    return proj
+
+
+# ── DEEP TEARDOWN (Craft Anything's "inspect the actual code and files") ──────────────────────────
+# Grounded in the REAL source (from deepcode.ingest), not inferred from public signals. Same output shape as
+# the public teardown, so Build-it / Fidelity Check / Rebuild Kit all work on it unchanged.
+DEEP_SYSTEM = """You are BLUEPRINT performing a DEEP teardown from a target's ACTUAL SOURCE CODE — you have the
+real files (tree, manifests, and file contents), not just public signals. Produce a grounded architectural
+teardown.
+
+RULES:
+- Ground EVERY claim in the real code you were given; prefer naming the file that proves it.
+- Infer and DESCRIBE architecture, data flow and patterns — do NOT paste proprietary code verbatim into your
+  output. Describe it; don't copy it.
+- Read the manifests for the true stack/dependencies. Read entry points and routes for the real architecture.
+- Be concrete and honest; if something isn't in the files, say it's not visible rather than inventing it.
+
+Return ONLY this JSON:
+{
+  "summary": "2-3 sentences: what this codebase is and does, grounded in the files",
+  "business_model": "best inference or 'unknown'",
+  "inferred_stack": ["real languages/frameworks/services from the manifests + code"],
+  "architecture": {"description": "how it's structured and how data flows, citing files", "components": ["component — role"]},
+  "key_modules": [{"file": "path", "role": "what it does"}],
+  "data_model": ["key entities/tables/models seen in the code"],
+  "routes_or_apis": ["notable routes/endpoints/commands found"],
+  "notable_patterns": ["real patterns, good or risky, with the file that shows them"],
+  "improvements": [{"title": "concrete improvement", "why": "grounded reason"}],
+  "mvp_clone_spec": {"core": "the core to rebuild", "first_feature": "the one feature to build first", "build_difficulty": "1-10", "market_potential": "$ | $$ | $$$"},
+  "clone_studio": {"stack": ["recommended rebuild stack"], "first_feature": "first feature end-to-end"}
+}
+Output valid JSON only."""
+
+
+async def deep_teardown(code: dict) -> dict:
+    """Grounded teardown from an ACTUAL codebase (deepcode.ingest output). Same shape as the public teardown."""
+    ctx = {
+        "origin": code.get("origin"),
+        "file_count": code.get("file_count"),
+        "languages": code.get("languages"),
+        "tree": (code.get("tree") or [])[:200],
+        "manifests": code.get("manifests"),
+        "files": [{"path": f.get("path"), "content": str(f.get("content") or "")[:3000]}
+                  for f in (code.get("files") or [])[:30]],
+    }
+    user = "ACTUAL CODEBASE (real files):\n" + json.dumps(ctx, ensure_ascii=False)[:22000]
+    reply = await llm.chat([{"role": "system", "content": DEEP_SYSTEM}, {"role": "user", "content": user}],
+                           temperature=0.2, max_tokens=3500, json_mode=True)
+    try:
+        rep = llm.extract_json(reply)
+    except ValueError:
+        return {"error": "deep teardown returned unparseable output", "raw": reply[:1500]}
+    rep["_deep"] = True
+    rep["_source"] = code.get("origin")
+    try:
+        rep["evidence_score"] = {"score": min(95, 55 + min(40, (code.get("file_count") or 0) // 5)),
+                                 "basis": [f"{code.get('file_count', 0)} real files read",
+                                           f"{len(code.get('manifests') or {})} manifests",
+                                           f"{len(code.get('files') or [])} source files analyzed"]}
+    except Exception:  # noqa: BLE001
+        pass
+    return rep
 
 
 REBUILD_SYSTEM = """You are BLUEPRINT's Rebuild Kit generator. From the product teardown, produce TWO

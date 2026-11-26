@@ -135,15 +135,17 @@
 
   <div class="card">
     <div class="row">
-      <input id="target" type="text" placeholder="example.com  ·  https://app.example.com  ·  app-store link" autofocus>
+      <input id="target" type="text" placeholder="example.com  ·  https://app.example.com  ·  GitHub repo URL  ·  local folder path" autofocus>
       <label class="toggle"><input type="checkbox" id="active"> Deep recon</label>
       <button id="go">Analyze</button>
+      <button id="deep" class="audit-btn" title="Read the ACTUAL source code — a GitHub repo or a local folder — and ground the teardown in the real files">🔬 Deep (real code)</button>
       <button id="audit" class="audit-btn" title="Load the LIVE app in a real browser and measure runtime health">🩺 Health Audit</button>
     </div>
     <div class="redline">
-      <b>Public signals only.</b> BLUEPRINT infers architecture from observable evidence (fingerprints, headers,
-      DNS/TLS, public GitHub, pricing). It honors robots.txt and does <b>not</b> touch the dark web, decompile
-      binaries, bypass DRM, or scrape behind logins. “Deep recon” adds opt-in GraphQL/endpoint probing.
+      <b>Two depths.</b> <b>Analyze</b> a URL from observable signals (fingerprints, headers, DNS/TLS, GitHub,
+      pricing), or <b>🔬 Deep</b> — point it at a <b>GitHub repo or local folder</b> and BLUEPRINT reads the
+      <b>actual source</b>, grounding the teardown in real code. Like Craft Anything, it does <b>not</b> crack
+      DRM, logins, or anti-cheat. Analyze code you have the right to.
     </div>
     <div class="status" id="status"><span class="spin"></span><span id="statusText">Working…</span></div>
   </div>
@@ -168,7 +170,24 @@ function startStatus(){ let i=0; $('#status').classList.add('on'); $('#statusTex
 function stopStatus(){ clearInterval(statusTimer); $('#status').classList.remove('on'); }
 
 $('#go').addEventListener('click', run);
+$('#deep').addEventListener('click', runDeep);
 $('#target').addEventListener('keydown', e=>{ if(e.key==='Enter') run(); });
+
+async function runDeep(){
+  const source = $('#target').value.trim();
+  if(!source) return;
+  $('#deep').disabled=true; $('#go').disabled=true; $('#out').classList.remove('on');
+  $('#status').classList.add('on'); $('#statusText').textContent='Reading the actual source (cloning repo / scanning folder) and grounding the teardown in the real code…';
+  try{
+    const r = await fetch('/api/deep_analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source})});
+    const data = await r.json();
+    if(!r.ok){ renderError(data.error||'Request failed'); return; }
+    if(data.note && !data.report){ renderError(data.note); return; }
+    render(data);
+  }catch(e){ renderError(e.message); }
+  finally{ $('#deep').disabled=false; $('#go').disabled=false; stopStatus(); }
+}
 
 async function run(){
   const target = $('#target').value.trim();
@@ -363,12 +382,49 @@ function cloneStudio(rep){
   +'</div>';
   h+='<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
     +'<button class="bigbtn" onclick="generateApp()">🚀 Build it with AI</button>'
+    +'<button class="bigbtn" onclick="generateChecked()">🔁 Build + Check</button>'
     +'<button class="bigbtn" onclick="rebuildKit()">📋 Rebuild Kit (PRD + prompt)</button>'
+    +'<button class="xbtn" onclick="visualStudy()">👁 Visual Study (3 widths)</button>'
     +'<button class="xbtn" onclick="downloadBrief()">⬇ Build brief (.md)</button>'
     +'<button class="xbtn" onclick="copyBuildPrompt()">🛠 Quick prompt → Emergent / Lovable / Bolt</button></div>'
     +'<p class="muted" style="font-size:11.5px;margin-top:6px"><b>Build it with AI</b> = a real runnable starter project (.zip). <b>Rebuild Kit</b> = a <b>PRD + spec-driven prompt</b> to paste into Claude/ChatGPT and build it right (fewer wasted tokens). Pick <b>Improve / Fix / Redesign</b> + a name to rebuild a friend’s app keeping their identity; blank = fresh clone. All <b>clean-room</b> — no code/assets copied.</p>';
+  h+='<div id="visOut" class="buildout"></div>';
   h+='<div id="kitOut" class="buildout"></div>';
   h+='<div id="buildOut" class="buildout"></div>';
+  return h;
+}
+async function visualStudy(){
+  const target=(LAST&&LAST.ev&&LAST.ev.target)||''; const out=document.getElementById('visOut');
+  if(!target){ if(out) out.innerHTML='<p class="muted">Run a teardown first.</p>'; return; }
+  if(out) out.innerHTML='<div class="building"><span class="spin"></span> Loading the page in a real browser at desktop, tablet &amp; mobile and observing how it renders (~15-25s)…</div>';
+  try{
+    const r=await fetch('/api/visual_study',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target})});
+    const d=await r.json(); LAST.visual=d.error?null:d;
+    if(out) out.innerHTML=renderVisual(d);
+  }catch(e){ if(out) out.innerHTML='<div class="err">⚠ '+esc(e.message)+'</div>'; }
+}
+function renderVisual(d){
+  if(!d||d.error) return '<div class="err">⚠ '+esc((d&&d.error)||'visual study failed')+(d&&d.detail?' — '+esc(d.detail):'')+'</div>';
+  const hd='margin:12px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent2)';
+  let h='<div class="projbox"><div class="projhead"><b style="font-size:14px">👁 Visual Study — '+esc(d.host||'')+'</b><span class="muted" style="font-size:11px">rendered in a real browser</span></div>';
+  h+='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">';
+  (d.widths||[]).forEach(w=>{
+    const o=w.observed||{}, pal=o.palette||{}, lay=o.layout||{};
+    h+='<div style="flex:1;min-width:180px;max-width:280px">';
+    h+='<div class="muted" style="font-size:11px;margin-bottom:4px"><b>'+esc(w.width||'')+'</b> · '+(w.px||'')+'px</div>';
+    if(w.thumb) h+='<img src="'+w.thumb+'" style="width:100%;border:1px solid var(--line,#223);border-radius:8px;display:block" loading="lazy" />';
+    else if(w.error) h+='<div class="err" style="font-size:11px">'+esc(w.error)+'</div>';
+    if(pal.accent&&pal.accent.length){ h+='<div style="display:flex;gap:4px;margin-top:5px;align-items:center"><span class="muted" style="font-size:10px">accents</span>';
+      pal.accent.forEach(c=>{ h+='<span title="'+esc(c)+'" style="width:14px;height:14px;border-radius:3px;border:1px solid #0004;background:'+esc(c)+'"></span>'; }); h+='</div>'; }
+    h+='<div class="muted" style="font-size:10.5px;margin-top:4px">'+(pal.font?'font '+esc(pal.font)+' · ':'')+(lay.sections!=null?lay.sections+' sections · ':'')+(lay.buttons!=null?lay.buttons+' btns · ':'')+(lay.inputs!=null?lay.inputs+' inputs':'')+(o.overflow?' · ⚠ h-overflow':'')+'</div>';
+    h+='</div>';
+  });
+  h+='</div>';
+  // headings from the desktop view (grounded observed text)
+  const dv=(d.widths||[]).find(w=>w.width==='desktop')||{}; const heads=((dv.observed||{}).layout||{}).headings||[];
+  if(heads.length){ h+='<h4 style="'+hd+'">Observed headings</h4><div style="display:flex;flex-wrap:wrap;gap:5px">'+heads.map(x=>'<span class="chip">'+esc(x.text||'')+'</span>').join('')+'</div>'; }
+  h+='<p class="muted" style="font-size:11px;margin-top:8px">Fed into the Fidelity Check so the rebuild is judged against how the original actually looks. Clean-room — observation only, no assets copied.</p>';
+  h+='</div>';
   return h;
 }
 function vocPane(ev){
@@ -431,7 +487,8 @@ async function generateApp(){
 function renderProject(p){
   const out=document.getElementById('buildOut'); const files=p.files||[];
   let h='<div class="projbox"><div class="projhead"><b style="font-size:15px">🚀 '+esc(p.name||'your-app')+'</b>'
-    +'<button class="bigbtn sm" onclick="downloadZip()">⬇ Download project (.zip)</button></div>';
+    +'<span style="display:flex;gap:8px;flex-wrap:wrap"><button class="bigbtn sm" onclick="checkFidelity()">✓ Check fidelity</button>'
+    +'<button class="bigbtn sm" onclick="downloadZip()">⬇ Download project (.zip)</button></span></div>';
   if(p.summary) h+='<p class="muted" style="margin:8px 0 10px;line-height:1.5">'+esc(p.summary)+'</p>';
   if((p.stack||[]).length) h+='<div style="margin-bottom:8px">'+p.stack.map(s=>'<span class="chip">'+esc(s)+'</span>').join('')+'</div>';
   if((p.run||[]).length) h+='<h4 style="margin:10px 0 5px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent2)">Run it</h4><pre class="tree">'+p.run.map(esc).join('\n')+'</pre>';
@@ -439,9 +496,58 @@ function renderProject(p){
   h+=files.map(f=>'<div class="fileitem"><div class="filehdr" onclick="this.parentNode.classList.toggle(\'open\')"><span class="fp">'+esc(f.path)+'</span><span class="fx">▸</span></div><pre class="filebody">'+esc(f.content||'')+'</pre></div>').join('');
   h+='</div>';
   if((p.next_steps||[]).length) h+='<h4 style="margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent2)">Next steps</h4><ul>'+p.next_steps.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ul>';
+  h+='<div id="fidOut">'+(p._fidelity?renderFidelity(p._fidelity,p._check_trail):'')+'</div>';
   h+='</div>';
   out.innerHTML=h;
 }
+function fidColor(n){ n=+n||0; return n>=80?'#7bd389':n>=55?'#ffd93b':'#ff6b6b'; }
+function renderFidelity(chk, trail){
+  if(!chk) return '';
+  if(chk.error) return '<div class="err" style="margin-top:12px">⚠ '+esc(chk.error)+'</div>';
+  const sc=+chk.fidelity_score||0, hd='margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent2)';
+  let h='<div class="projbox" style="margin-top:14px;border-color:'+fidColor(sc)+'55">'
+    +'<div class="projhead"><b style="font-size:14px">✓ Fidelity Check — build vs. teardown spec</b>'
+    +'<span style="font-weight:800;font-size:19px;color:'+fidColor(sc)+'">'+sc+'<span style="font-size:12px;color:var(--muted)">/100</span></span></div>';
+  if(chk.verdict) h+='<p class="muted" style="margin:6px 0 8px;line-height:1.5">'+esc(chk.verdict)+'</p>';
+  if(trail&&trail.length>1) h+='<p class="muted" style="font-size:11.5px">🔁 Refine loop: '+trail.map(t=>'round '+t.round+' → '+(t.fidelity_score!=null?t.fidelity_score:'—')).join('  ·  ')+'</p>';
+  if((chk.matched||[]).length){ h+='<h4 style="'+hd+'">✓ Matches the spec</h4><ul>'+chk.matched.map(m=>'<li>'+esc(m)+'</li>').join('')+'</ul>'; }
+  if((chk.gaps||[]).length){ h+='<h4 style="'+hd+'">Gaps — what doesn’t match yet</h4>';
+    chk.gaps.forEach(g=>{ const sv=(g.severity||'').toLowerCase(), c=sv==='high'?'#ff6b6b':sv==='med'?'#ff9f43':'#ffd93b';
+      h+='<div class="imp" style="border-left:3px solid '+c+';margin-bottom:8px"><b>'+esc(g.item||'')+'</b>'
+        +(g.why?'<div class="muted" style="font-size:12px">'+esc(g.why||'')+'</div>':'')+'</div>'; }); }
+  if(chk.refine_prompt){ h+='<h4 style="'+hd+'">Refine prompt — paste back to close the gaps</h4>'
+    +'<pre class="tree">'+esc(chk.refine_prompt)+'</pre>'
+    +'<button class="xbtn" onclick="copyRefine(this)">📋 Copy refine prompt</button>'; }
+  h+='</div>';
+  return h;
+}
+async function generateChecked(){
+  if(!LAST||!LAST.rep) return;
+  const out=document.getElementById('buildOut');
+  out.innerHTML='<div class="building"><span class="spin"></span> Building, then checking it against the teardown and refining the gaps (~30-60s)…</div>';
+  const goalEl=document.getElementById('buildGoal'), nameEl=document.getElementById('keepName');
+  const goal=goalEl?goalEl.value:'clone', keep_name=nameEl?nameEl.value.trim():'';
+  try{
+    const r=await fetch('/api/generate_checked',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({report:LAST.rep, evidence:LAST.ev, goal, keep_name, rounds:2, visual:LAST.visual||null})});
+    const p=await r.json();
+    if(p.error){ out.innerHTML='<div class="err">⚠ '+esc(p.error)+'</div>'; return; }
+    LAST.project=p; renderProject(p);
+  }catch(e){ out.innerHTML='<div class="err">⚠ '+esc(e.message)+'</div>'; }
+}
+async function checkFidelity(){
+  const p=LAST&&LAST.project; if(!p) return;
+  const fo=document.getElementById('fidOut');
+  if(fo) fo.innerHTML='<div class="building"><span class="spin"></span> Checking the build against the teardown spec…</div>';
+  try{
+    const r=await fetch('/api/fidelity_check',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({report:LAST.rep, evidence:LAST.ev, project:p, visual:LAST.visual||null})});
+    const chk=await r.json(); p._fidelity=chk;
+    if(fo) fo.innerHTML=renderFidelity(chk, p._check_trail);
+  }catch(e){ if(fo) fo.innerHTML='<div class="err">⚠ '+esc(e.message)+'</div>'; }
+}
+function copyRefine(btn){ const p=LAST&&LAST.project, t=p&&p._fidelity&&p._fidelity.refine_prompt;
+  if(t){ navigator.clipboard.writeText(t); if(btn){ const o=btn.textContent; btn.textContent='✓ Copied'; setTimeout(()=>btn.textContent=o,1500); } } }
 async function downloadZip(){
   const p=LAST&&LAST.project; if(!p){ return; }
   if(!window.JSZip){ dl((p.name||'app')+'.files.json', JSON.stringify(p.files,null,2), 'application/json'); return; }
